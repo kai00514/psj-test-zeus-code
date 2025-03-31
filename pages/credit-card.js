@@ -32,15 +32,9 @@ export default function CreditCard() {
 
       const data = await response.json();
       if (data.iframeUrl) {
-        // 3Dセキュア認証ページを新しいウィンドウで開く
-        const secureWindow = window.open(data.iframeUrl, '3DSecure', 
-          'width=800,height=600,location=yes,status=yes,scrollbars=yes'
-        );
-        
-        // ウィンドウが開けなかった場合（ポップアップブロックなど）のエラーハンドリング
-        if (!secureWindow || secureWindow.closed || typeof secureWindow.closed == 'undefined') {
-          alert('ポップアップがブロックされました。ブラウザの設定を確認してください。');
-        }
+        // URLから不要なベースURLを削除して直接3Dセキュア認証ページに遷移
+        const cleanUrl = data.iframeUrl.replace(/^.*?\/https/, 'https');
+        window.location.href = decodeURIComponent(cleanUrl);
       }
     } catch (error) {
       console.error('Payment error:', error);
@@ -112,19 +106,6 @@ export default function CreditCard() {
           決済
         </button>
       </form>
-
-      {/* 3Dセキュア用のiframeを表示（enroll結果にiframeUrlがある場合） */}
-      {iframeUrl && (
-        <div style={{ marginTop: '2rem' }}>
-          <h3>3Dセキュア認証</h3>
-          <iframe
-            src={iframeUrl}
-            title="3D Secure"
-            width="100%"
-            height="400px"
-          />
-        </div>
-      )}
     </div>
   );
 }
