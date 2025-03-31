@@ -15,43 +15,36 @@ export default function CreditCard() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
     try {
-      // ① APIへカード情報を送信し、トークン発行＆EnrolReq
       const response = await fetch('/api/payment', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           cardNumber,
-          expiryMonth,
           expiryYear,
+          expiryMonth,
           cardHolder,
-          amount
-        })
+          amount,
+        }),
       });
 
-      if (!response.ok) {
-        throw new Error('API Error');
-      }
-
       const data = await response.json();
-      console.log('Payment API Response:', data);
-
-      // data.iframeUrl があれば 3Dセキュア用のiframeを表示
       if (data.iframeUrl) {
-        setIframeUrl(data.iframeUrl);
+        // 3Dセキュア認証ページを新しいウィンドウで開く
+        const secureWindow = window.open(data.iframeUrl, '3DSecure', 
+          'width=800,height=600,location=yes,status=yes,scrollbars=yes'
+        );
+        
+        // ウィンドウが開けなかった場合（ポップアップブロックなど）のエラーハンドリング
+        if (!secureWindow || secureWindow.closed || typeof secureWindow.closed == 'undefined') {
+          alert('ポップアップがブロックされました。ブラウザの設定を確認してください。');
+        }
       }
-
-      // ※ ここから先 (PaReq/PaRes → AuthReq/AuthRes → PayReq/PayRes) は
-      //    3Dセキュアのフローに合わせて実装が必要。
-      //    いったん "3Dセキュアの画面に遷移" or "iframeを表示" のどちらかのパターンが多いです。
-      //    TermURLに制御が返る/コールバックが来る などの実装を続けていきます。
-
-    } catch (err) {
-      console.error(err);
-      alert('決済リクエストに失敗しました');
+    } catch (error) {
+      console.error('Payment error:', error);
+      alert('決済処理中にエラーが発生しました。');
     }
   };
 
