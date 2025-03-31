@@ -29,12 +29,15 @@ export default function CreditCard() {
           amount,
         }),
       });
+      console.log("/api/payment route - response: ", response);
 
       const data = await response.json();
       if (data.iframeUrl) {
         // URLから不要なベースURLを削除
+        console.log("iframURLから不要部分を削除する前のURL: ", data.iframeUrl);
         const cleanUrl = data.iframeUrl.replace(/^.*?\/https/, 'https');
         const decodedUrl = decodeURIComponent(cleanUrl);
+        console.log("iframeURL decodeUrl: ", decodeUrl);
         
         // 新しいウィンドウで3Dセキュア認証ページを開く
         const secureWindow = window.open(
