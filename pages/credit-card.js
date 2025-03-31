@@ -32,9 +32,21 @@ export default function CreditCard() {
 
       const data = await response.json();
       if (data.iframeUrl) {
-        // URLから不要なベースURLを削除して直接3Dセキュア認証ページに遷移
+        // URLから不要なベースURLを削除
         const cleanUrl = data.iframeUrl.replace(/^.*?\/https/, 'https');
-        window.location.href = decodeURIComponent(cleanUrl);
+        const decodedUrl = decodeURIComponent(cleanUrl);
+        
+        // 新しいウィンドウで3Dセキュア認証ページを開く
+        const secureWindow = window.open(
+          decodedUrl,
+          '3DSecure',
+          'width=800,height=600,location=yes,status=yes,scrollbars=yes'
+        );
+
+        // ポップアップブロックの確認
+        if (!secureWindow || secureWindow.closed || typeof secureWindow.closed == 'undefined') {
+          alert('ポップアップがブロックされました。ブラウザの設定を確認してください。');
+        }
       }
     } catch (error) {
       console.error('Payment error:', error);
