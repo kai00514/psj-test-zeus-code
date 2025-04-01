@@ -31,7 +31,7 @@ export default async function handler(req, res) {
     <name>${cardHolder}</name>
   </card>
 </request>`;
-
+    console.log("tokenXml: ", tokenXml);
     const tokenResponse = await axios.post(tokenEndpoint, tokenXml, {
       headers: { 'Content-Type': 'text/xml' },
       responseType: 'text', // xmlレスポンスをそのまま受け取る
@@ -76,7 +76,9 @@ export default async function handler(req, res) {
     console.log("overall: ", enrolRes);
     console.log("status-code: ", enrolRes.result[0].status[0]);
     const xid = enrolRes?.xid?.[0];
-    const iframeUrl = enrolRes?.iframeUrl?.[0];
+    const encodedIframeUrl = enrolRes?.iframeUrl?.[0];
+    // iframeUrlをデコード
+    const iframeUrl = decodeURIComponent(encodedIframeUrl);
     // 3Dセキュア完了後に呼び出される TermURL
     const termUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/payment-result`;
 

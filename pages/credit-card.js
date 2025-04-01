@@ -3,6 +3,9 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 
+// グローバル変数として定義
+var zeusTokenIpcode = "2019002175";
+
 export default function CreditCard() {
   const router = useRouter();
   const [cardNumber, setCardNumber] = useState('');
@@ -12,8 +15,11 @@ export default function CreditCard() {
   const [amount, setAmount] = useState(1000);
   const [isLoading, setIsLoading] = useState(false);
 
-  // スクリプトの読み込み
+  // スクリプトの読み込みとzeusTokenIpcodeの設定
   useEffect(() => {
+    // zeusTokenIpcodeをグローバルに設定
+    window.zeusTokenIpcode = "2019002175";  // ゼウス発行のIPコードを設定
+
     const script = document.createElement('script');
     script.src = 'https://linkpt.cardservice.co.jp/api/token/2.0/zeus_token2.js';
     script.type = 'text/javascript';
@@ -68,14 +74,24 @@ export default function CreditCard() {
 
       const data = await response.json();
       if (data.xid && data.iframeUrl) {
-        // setPareqParams関数を呼び出し
-        window.setPareqParams(
-          data.xid,           // md
-          'PaReq',           // paReq (固定値)
-          `${window.location.origin}/payment-result`, // termUrl
-          '2',               // threeDSMethod (固定値)
-          data.iframeUrl     // iframeUrl
-        );
+        // setPareqParamsを非同期で実行し、プロミスを適切に処理
+        try {
+          await new Promise((resolve, reject) => {
+            window.setPareqParams(
+              data.xid,           // md
+              'PaReq',           // paReq (固定値)
+              `${window.location.origin}/payment-result`, // termUrl
+              '2',               // threeDSMethod (固定値)
+              data.iframeUrl,    // iframeUrl
+              resolve,           // 成功時のコールバック
+              reject            // エラー時のコールバック
+            );
+          });
+        } catch (error) {
+          console.error('3Dセキュア認証エラー:', error);
+          setIsLoading(false);
+          alert('3Dセキュア認証処理中にエラーが発生しました。');
+        }
       }
     } catch (error) {
       console.error('Payment error:', error);
