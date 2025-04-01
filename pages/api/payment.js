@@ -57,8 +57,8 @@ export default async function handler(req, res) {
     <count>01</count>
   </payment>
   <user>
-    <telno validation="strict">01234567890</telno>
-    <email language="japanese">test@test.com</email>
+    <telno validation="strict">09034343282</telno>
+    <email language="japanese">onsen0514@gmail.com</email>
   </user>
   <uniq_key>
     <sendid>TEST0001</sendid>
