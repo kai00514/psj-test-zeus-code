@@ -14,9 +14,17 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { cardNumber, expiryYear, expiryMonth, cardHolder, amount } = req.body;
+    console.log('=== /api/payment (トークン発行 + EnrolReq) 開始 ===');
+    console.log('[受信BODY]:', req.body);
 
-    // === ① トークン発行 ================================================
+    const { cardNumber, expiryYear, expiryMonth, cardHolder, amount } = req.body;
+    console.log("information: ", cardNumber, expiryYear, expiryMonth, cardHolder, amount);
+    const paddedMonth = expiryMonth.toString().padStart(2, '0'); // ← 2桁ゼロ埋め
+
+    // ----------------------------------
+    // (1) トークン発行
+    // ----------------------------------
+    // expiryYear/expiryMonth をXMLに反映する(例: 2025年08月)
     const tokenXml = `<?xml version="1.0" encoding="utf-8"?>
 <request service="token" action="newcard">
   <authentication>
@@ -25,26 +33,34 @@ export default async function handler(req, res) {
   <card>
     <number>${cardNumber}</number>
     <expires>
-      <year>2025</year>
-      <month>08</month>
+      <year>${expiryYear || '2025'}</year>
+      <month>${paddedMonth || '08'}</month>
     </expires>
     <name>${cardHolder}</name>
   </card>
 </request>`;
-    console.log("tokenXml: ", tokenXml);
+
+    console.log('\n---(1)トークン発行 リクエストXML---\n', tokenXml);
+
     const tokenResponse = await axios.post(tokenEndpoint, tokenXml, {
       headers: { 'Content-Type': 'text/xml' },
       responseType: 'text', // xmlレスポンスをそのまま受け取る
     });
+    console.log('\n---(1)トークン発行 レスポンス生データ---\n', tokenResponse.data);
+
     const tokenResult = await parseStringPromise(tokenResponse.data);
     const tokenKey = tokenResult?.response?.result?.[0]?.token_key?.[0];
-    console.log(tokenKey);
+
+    console.log('(1)取得した tokenKey:', tokenKey);
 
     if (!tokenKey) {
+      console.error('トークンが取得できませんでした:', tokenResult);
       return res.status(500).json({ error: 'Token issuance failed', detail: tokenResult });
     }
 
-    // === ② EnrolReq (3Dセキュアの事前認証) ============================
+    // ----------------------------------
+    // (2) EnrolReq (3Dセキュア事前認証)
+    // ----------------------------------
     const enrolXml = `<?xml version="1.0" encoding="utf-8"?>
 <request service="secure_link_3d" action="enroll">
   <authentication>
@@ -66,33 +82,35 @@ export default async function handler(req, res) {
   <use_3ds2_flag>1</use_3ds2_flag>
 </request>`;
 
+    console.log('\n---(2)EnrolReq リクエストXML---\n', enrolXml);
+
     const enrolResponse = await axios.post(secureApiEndpoint, enrolXml, {
       headers: { 'Content-Type': 'application/xml' },
       responseType: 'text',
     });
-    const enrolResult = await parseStringPromise(enrolResponse.data);
-    console.log("-------------- enrolReq --------------");
-    const enrolRes = enrolResult?.response;
-    console.log("overall: ", enrolRes);
-    console.log("status-code: ", enrolRes.result[0].status[0]);
-    const xid = enrolRes?.xid?.[0];
-    const encodedIframeUrl = enrolRes?.iframeUrl?.[0];
-    // iframeUrlをデコード
-    const iframeUrl = decodeURIComponent(encodedIframeUrl);
-    // 3Dセキュア完了後に呼び出される TermURL
-    const termUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/payment-result`;
+    console.log('\n---(2)EnrolRes レスポンス生データ---\n', enrolResponse.data);
 
-    // ここでは、xid や iframeUrl をフロントへ返す
+    const enrolResult = await parseStringPromise(enrolResponse.data);
+    const enrolRes = enrolResult?.response || {};
+    const xid = enrolRes?.xid?.[0];
+    // iframeUrl はエンコードされているケースがあるので decodeURIComponent
+    const encodedIframeUrl = enrolRes?.iframeUrl?.[0];
+    const iframeUrl = decodeURIComponent(encodedIframeUrl || '');
+
+    console.log('(2)取得した EnrolRes.xid:', xid);
+    console.log('(2)取得した EnrolRes.iframeUrl:', iframeUrl);
+
+    // フロント側で setPareqParams() の引数に使うため、一式返す
     res.status(200).json({
-      tokenKey,
       xid,
       iframeUrl,
-      termUrl,
-      rawEnrolResponse: enrolRes, // デバッグ用にまるごと返してもOK
+      // デバッグ用
+      rawEnrolResponse: enrolRes,
     });
 
+    console.log('=== /api/payment (トークン発行 + EnrolReq) 完了 ===');
   } catch (err) {
-    console.error(err);
+    console.error('エラー発生:', err);
     res.status(500).json({ error: err.message });
   }
 }

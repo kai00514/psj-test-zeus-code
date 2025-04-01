@@ -3,9 +3,6 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 
-// グローバル変数として定義
-var zeusTokenIpcode = "2019002175";
-
 export default function CreditCard() {
   const router = useRouter();
   const [cardNumber, setCardNumber] = useState('');
@@ -15,32 +12,40 @@ export default function CreditCard() {
   const [amount, setAmount] = useState(1000);
   const [isLoading, setIsLoading] = useState(false);
 
-  // スクリプトの読み込みとzeusTokenIpcodeの設定
   useEffect(() => {
-    // zeusTokenIpcodeをグローバルに設定
-    window.zeusTokenIpcode = "2019002175";  // ゼウス発行のIPコードを設定
+    // Zeus発行のIPコードをグローバル変数に設定
+    window.zeusTokenIpcode = '2019002175';
 
+    // 3Dセキュア(token)用のスクリプトを読み込む
     const script = document.createElement('script');
     script.src = 'https://linkpt.cardservice.co.jp/api/token/2.0/zeus_token2.js';
     script.type = 'text/javascript';
     document.body.appendChild(script);
 
-    // グローバル関数の定義
+    // グローバル関数の定義（Zeus JSによって呼び出される）
     window._onPaResSuccess = (data) => {
-      console.log('認証成功:', data);
+      // ここに callback 結果が返ってくる
+      console.log('=== _onPaResSuccess() 3Dセキュア認証結果 ===');
+      console.log('レスポンス(認証結果):', data);
+
+      // status が success / failure / invalid / maintenance などありうる
       if (data.status === 'success') {
+        // 認証→決済が正常完了
         router.push('/payment-result?status=success');
       } else {
+        // 認証失敗 or 何らかのエラー
         router.push('/payment-result?status=failure');
       }
     };
 
     window._onError = (error) => {
-      console.error('3Dセキュアエラー:', error);
+      console.error('=== _onError() 3Dセキュアエラー ===');
+      console.error('エラー内容:', error);
       setIsLoading(false);
       alert('認証処理中にエラーが発生しました。');
     };
 
+    // チャレンジ画面がロードされた際に呼ばれる
     window.loadedChallenge = () => {
       const waitDiv = document.getElementById('challenge_wait');
       if (waitDiv) {
@@ -58,6 +63,7 @@ export default function CreditCard() {
     setIsLoading(true);
 
     try {
+      console.log('=== [Step1] トークン発行 + EnrolReq 開始 ===');
       const response = await fetch('/api/payment', {
         method: 'POST',
         headers: {
@@ -72,29 +78,38 @@ export default function CreditCard() {
         }),
       });
 
+      console.log('フロント→/api/payment へのレスポンス:', response);
       const data = await response.json();
+      console.log('/api/payment の処理結果:', data);
+
+      // EnrolReq の結果、 xID と iframeUrl が返ってきたら 3Dセキュア開始
       if (data.xid && data.iframeUrl) {
-        // setPareqParamsを非同期で実行し、プロミスを適切に処理
         try {
+          console.log('=== [Step2] setPareqParams() による3Dセキュア認証開始 ===');
           await new Promise((resolve, reject) => {
             window.setPareqParams(
-              data.xid,           // md
-              'PaReq',           // paReq (固定値)
-              `${window.location.origin}/payment-result`, // termUrl
-              '2',               // threeDSMethod (固定値)
-              data.iframeUrl,    // iframeUrl
-              resolve,           // 成功時のコールバック
-              reject            // エラー時のコールバック
+              data.xid,                                // md
+              'PaReq',                                 // paReq(固定値)
+              `${window.location.origin}/payment-result/callback`, // termUrl
+              '2',                                     // threeDSMethod(固定値)
+              data.iframeUrl,                          // iframeUrl
+              resolve,
+              reject
             );
           });
+          // ここは「setPareqParams が即座に成功した」タイミング
+          // 実際の認証完了は別途 _onPaResSuccess() に返る
         } catch (error) {
-          console.error('3Dセキュア認証エラー:', error);
+          console.error('setPareqParams 内部でエラー:', error);
           setIsLoading(false);
           alert('3Dセキュア認証処理中にエラーが発生しました。');
         }
+      } else {
+        console.error('EnrolReq の結果に不備があり、3Dセキュアを開始できません');
+        setIsLoading(false);
       }
     } catch (error) {
-      console.error('Payment error:', error);
+      console.error('フロント→/api/payment 呼び出しエラー:', error);
       alert('決済処理中にエラーが発生しました。');
       setIsLoading(false);
     }
@@ -165,8 +180,8 @@ export default function CreditCard() {
             />
           </div>
 
-          <button 
-            type="submit" 
+          <button
+            type="submit"
             style={{ padding: '0.5rem 1rem' }}
             disabled={isLoading}
           >
@@ -174,7 +189,7 @@ export default function CreditCard() {
           </button>
         </form>
 
-        {/* 3Dセキュア用のコンテナ */}
+        {/* 3Dセキュア用のiframeを表示するブロック */}
         <div id="3dscontainer"></div>
 
         {/* チャレンジフロー待機メッセージ */}
