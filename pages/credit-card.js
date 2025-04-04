@@ -11,6 +11,7 @@ export default function CreditCard() {
   const [cardHolder, setCardHolder] = useState('');
   const [amount, setAmount] = useState(1000);
   const [isLoading, setIsLoading] = useState(false);
+  const [isScriptLoaded, setIsScriptLoaded] = useState(false);
 
   useEffect(() => {
     // Zeus発行のIPコードをグローバル変数に設定
@@ -20,6 +21,17 @@ export default function CreditCard() {
     const script = document.createElement('script');
     script.src = 'https://linkpt.cardservice.co.jp/api/token/2.0/zeus_token2.js';
     script.type = 'text/javascript';
+    
+    // スクリプトのロード完了を検知
+    script.onload = () => {
+      setIsScriptLoaded(true);
+    };
+    
+    script.onerror = () => {
+      console.error('Zeus決済スクリプトのロードに失敗しました');
+      alert('決済システムの読み込みに失敗しました。ページをリロードしてください。');
+    };
+
     document.body.appendChild(script);
 
     // グローバル関数の定義（Zeus JSによって呼び出される）
@@ -54,12 +66,20 @@ export default function CreditCard() {
     };
 
     return () => {
-      document.body.removeChild(script);
+      if (script.parentNode) {
+        script.parentNode.removeChild(script);
+      }
     };
   }, [router]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    
+    if (!isScriptLoaded) {
+      alert('決済システムの読み込みが完了していません。しばらくお待ちください。');
+      return;
+    }
+
     setIsLoading(true);
 
     try {
@@ -86,23 +106,27 @@ export default function CreditCard() {
       if (data.xid && data.iframeUrl) {
         try {
           console.log('=== [Step2] setPareqParams() による3Dセキュア認証開始 ===');
+          
+          // window.setPareqParamsが存在することを確認
+          if (typeof window.setPareqParams !== 'function') {
+            throw new Error('決済システムが正しく初期化されていません');
+          }
+
           await new Promise((resolve, reject) => {
             window.setPareqParams(
-              data.xid,                                // md
-              'PaReq',                                 // paReq(固定値)
-              `${window.location.origin}/payment-result/callback`, // termUrl
-              '2',                                     // threeDSMethod(固定値)
-              data.iframeUrl,                          // iframeUrl
+              data.xid,
+              'PaReq',
+              `${window.location.origin}/payment-result/callback`,
+              '2',
+              data.iframeUrl,
               resolve,
               reject
             );
           });
-          // ここは「setPareqParams が即座に成功した」タイミング
-          // 実際の認証完了は別途 _onPaResSuccess() に返る
         } catch (error) {
           console.error('setPareqParams 内部でエラー:', error);
           setIsLoading(false);
-          alert('3Dセキュア認証処理中にエラーが発生しました。');
+          alert('3Dセキュア認証処理中にエラーが発生しました。ページをリロードして再度お試しください。');
         }
       } else {
         console.error('EnrolReq の結果に不備があり、3Dセキュアを開始できません');
