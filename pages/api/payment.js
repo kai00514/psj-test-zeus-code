@@ -8,24 +8,10 @@ const secureApiEndpoint = 'https://linkpt.cardservice.co.jp/cgi-bin/secure/api.c
 const clientip = '2019002175';
 const key = '11da83f6e7ab803020e74be300ad3761d55f7f74';
 
-export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).end(); // POST以外は許可しない
-  }
-
-  try {
-    console.log('=== /api/payment (トークン発行 + EnrolReq) 開始 ===');
-    console.log('[受信BODY]:', req.body);
-
-    const { cardNumber, expiryYear, expiryMonth, cardHolder, amount } = req.body;
-    console.log("information: ", cardNumber, expiryYear, expiryMonth, cardHolder, amount);
-    const paddedMonth = expiryMonth.toString().padStart(2, '0'); // ← 2桁ゼロ埋め
-
-    // ----------------------------------
-    // (1) トークン発行
-    // ----------------------------------
-    // expiryYear/expiryMonth をXMLに反映する(例: 2025年08月)
-    const tokenXml = `<?xml version="1.0" encoding="utf-8"?>
+// トークン発行用のXML生成
+const generateTokenXml = (cardNumber, expiryYear, expiryMonth, cardHolder) => {
+  const paddedMonth = expiryMonth.toString().padStart(2, '0');
+  return `<?xml version="1.0" encoding="utf-8"?>
 <request service="token" action="newcard">
   <authentication>
     <clientip>${clientip}</clientip>
@@ -39,29 +25,10 @@ export default async function handler(req, res) {
     <name>${cardHolder}</name>
   </card>
 </request>`;
+};
 
-    console.log('\n---(1)トークン発行 リクエストXML---\n', tokenXml);
-
-    const tokenResponse = await axios.post(tokenEndpoint, tokenXml, {
-      headers: { 'Content-Type': 'text/xml' },
-      responseType: 'text', // xmlレスポンスをそのまま受け取る
-    });
-    console.log('\n---(1)トークン発行 レスポンス生データ---\n', tokenResponse.data);
-
-    const tokenResult = await parseStringPromise(tokenResponse.data);
-    const tokenKey = tokenResult?.response?.result?.[0]?.token_key?.[0];
-
-    console.log('(1)取得した tokenKey:', tokenKey);
-
-    if (!tokenKey) {
-      console.error('トークンが取得できませんでした:', tokenResult);
-      return res.status(500).json({ error: 'Token issuance failed', detail: tokenResult });
-    }
-
-    // ----------------------------------
-    // (2) EnrolReq (3Dセキュア事前認証)
-    // ----------------------------------
-    const enrolXml = `<?xml version="1.0" encoding="utf-8"?>
+// EnrolReq用のXML生成
+const generateEnrolXml = (tokenKey, amount) => `<?xml version="1.0" encoding="utf-8"?>
 <request service="secure_link_3d" action="enroll">
   <authentication>
     <clientip>${clientip}</clientip>
@@ -69,7 +36,7 @@ export default async function handler(req, res) {
   </authentication>
   <token_key>${tokenKey}</token_key>
   <payment>
-    <amount>${amount || 1000}</amount>
+    <amount>${amount || 300}</amount>
     <count>01</count>
   </payment>
   <user>
@@ -82,35 +49,76 @@ export default async function handler(req, res) {
   <use_3ds2_flag>1</use_3ds2_flag>
 </request>`;
 
-    console.log('\n---(2)EnrolReq リクエストXML---\n', enrolXml);
+// トークン発行処理
+const issueToken = async (cardNumber, expiryYear, expiryMonth, cardHolder) => {
+  console.log('\n=== トークン発行処理開始 ===');
+  const tokenXml = generateTokenXml(cardNumber, expiryYear, expiryMonth, cardHolder);
+  console.log('トークン発行リクエストXML:', tokenXml);
 
-    const enrolResponse = await axios.post(secureApiEndpoint, enrolXml, {
-      headers: { 'Content-Type': 'application/xml' },
-      responseType: 'text',
-    });
-    console.log('\n---(2)EnrolRes レスポンス生データ---\n', enrolResponse.data);
+  const tokenResponse = await axios.post(tokenEndpoint, tokenXml, {
+    headers: { 'Content-Type': 'text/xml' },
+    responseType: 'text',
+  });
+  console.log('トークン発行レスポンス:', tokenResponse.data);
 
-    const enrolResult = await parseStringPromise(enrolResponse.data);
-    const enrolRes = enrolResult?.response || {};
-    const xid = enrolRes?.xid?.[0];
-    // iframeUrl はエンコードされているケースがあるので decodeURIComponent
-    const encodedIframeUrl = enrolRes?.iframeUrl?.[0];
-    const iframeUrl = decodeURIComponent(encodedIframeUrl || '');
+  const tokenResult = await parseStringPromise(tokenResponse.data);
+  const tokenKey = tokenResult?.response?.result?.[0]?.token_key?.[0];
 
-    console.log('(2)取得した EnrolRes.xid:', xid);
-    console.log('(2)取得した EnrolRes.iframeUrl:', iframeUrl);
+  if (!tokenKey) {
+    throw new Error('トークンの取得に失敗しました');
+  }
 
-    // フロント側で setPareqParams() の引数に使うため、一式返す
-    res.status(200).json({
-      xid,
-      iframeUrl,
-      // デバッグ用
-      rawEnrolResponse: enrolRes,
-    });
+  return tokenKey;
+};
 
-    console.log('=== /api/payment (トークン発行 + EnrolReq) 完了 ===');
-  } catch (err) {
-    console.error('エラー発生:', err);
-    res.status(500).json({ error: err.message });
+// EnrolReq処理
+const processEnrol = async (tokenKey, amount) => {
+  console.log('\n=== EnrolReq処理開始 ===');
+  const enrolXml = generateEnrolXml(tokenKey, amount);
+  console.log('EnrolReqリクエストXML:', enrolXml);
+
+  const enrolResponse = await axios.post(secureApiEndpoint, enrolXml, {
+    headers: { 'Content-Type': 'application/xml' },
+    responseType: 'text',
+  });
+  console.log('EnrolResレスポンス:', enrolResponse.data);
+
+  const enrolResult = await parseStringPromise(enrolResponse.data);
+  const enrolRes = enrolResult?.response || {};
+  
+  return {
+    xid: enrolRes?.xid?.[0],
+    iframeUrl: decodeURIComponent(enrolRes?.iframeUrl?.[0] || ''),
+    rawEnrolResponse: enrolRes
+  };
+};
+
+export default async function handler(req, res) {
+  if (req.method !== 'POST') {
+    return res.status(405).end();
+  }
+
+  try {
+    console.log('=== /api/payment 処理開始 ===');
+    console.log('受信データ:', req.body);
+
+    const { cardNumber, expiryYear, expiryMonth, cardHolder, amount } = req.body;
+
+    // トークン発行
+    const tokenKey = await issueToken(cardNumber, expiryYear, expiryMonth, cardHolder);
+    console.log('取得したトークン:', tokenKey);
+
+    // EnrolReq処理
+    const enrolResult = await processEnrol(tokenKey, amount);
+    console.log('EnrolReq結果:', enrolResult);
+
+    res.status(200).json(enrolResult);
+    console.log("enrolResult status: ", enrolResult.rawEnrolResponse.result[0].status);
+    console.log("enrolResult code: ", enrolResult.rawEnrolResponse.result[0].code);
+    console.log('=== /api/payment 処理完了 ===');
+
+  } catch (error) {
+    console.error('処理エラー:', error);
+    res.status(500).json({ error: error.message });
   }
 }
