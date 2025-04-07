@@ -77,120 +77,140 @@ export default async function handler(req, res) {
   // HTMLレスポンスを返して親ウィンドウの関数を呼び出す
   res.setHeader('Content-Type', 'text/html');
   res.status(200).send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>認証結果</title>
-      <script>
-        // 即時実行関数でコールバック処理を実行
-        (function() {
-          console.log('=== コールバックページ JavaScript 実行開始 ===');
-          
-          // データオブジェクトを作成 - 仕様書通り
-          const paymentData = {
-            md: "${md}",
-            paRes: "${paRes}",  // 認証結果 Y/N
-            status: "${status}" // success/failure/invalid/maintenance
-          };
-          
-          console.log('親ウィンドウに送信するデータ:', JSON.stringify(paymentData));
-          
-          // 親ウィンドウのURLパスを取得
-          const parentPath = window.location.origin + "/payment-result";
-          console.log('親ウィンドウへリダイレクト予定URL:', parentPath);
-          
-          // 複数の方法で親ウィンドウに通知を試みる
-          function notifyParentWindow() {
-            // 1. 親ウィンドウのグローバル関数を直接呼び出し
-            try {
-              if (window.parent && typeof window.parent._onPaResSuccess === 'function') {
-                console.log('親ウィンドウの_onPaResSuccess関数を直接呼び出し');
-                window.parent._onPaResSuccess(paymentData);
-                return true;
-              }
-            } catch (e) {
-              console.error('親関数呼び出しエラー:', e);
-            }
-            
-            // 2. postMessageを使用
-            try {
-              console.log('postMessageを使用して親ウィンドウに通知');
-              window.parent.postMessage({
-                type: '3DS_AUTH_COMPLETE',
-                data: paymentData
-              }, "*");  // "*"を使用してオリジン制限を緩和
-              return true;
-            } catch (e) {
-              console.error('postMessageエラー:', e);
-            }
-            
-            return false;
+<!DOCTYPE html>
+<html>
+<head>
+  <title>3Dセキュア認証結果</title>
+  <script>
+    // デバッグログ強化
+    console.log('[CALLBACK] 3Dセキュア認証コールバックページが読み込まれました');
+    console.log('[CALLBACK] 認証データ:', {
+      MD: '${md}',
+      PaRes: '${paRes}',
+      status: '${status}'
+    });
+    
+    // エラーオブジェクトの詳細情報を取得する関数
+    function getErrorDetails(error) {
+      return {
+        message: error.message || 'Unknown error',
+        name: error.name || 'Error',
+        stack: error.stack || 'No stack trace',
+        toString: error.toString()
+      };
+    }
+    
+    // 親ウィンドウへの通信を複数の方法で試行
+    function notifyParentWindow() {
+      console.log('[CALLBACK] 親ウィンドウへの通知を開始します');
+      
+      // 結果データ
+      const resultData = {
+        MD: '${md}',
+        PaRes: '${paRes}',
+        status: '${status}'
+      };
+      
+      try {
+        // 方法1: 親ウィンドウのグローバル関数を直接呼び出し
+        console.log('[CALLBACK] 方法1: 親ウィンドウのグローバル関数を直接呼び出し');
+        if (window.parent) {
+          console.log('[CALLBACK] window.parentにアクセス可能');
+          if (typeof window.parent._onPaResSuccess === 'function') {
+            console.log('[CALLBACK] 親ウィンドウの_onPaResSuccess関数を呼び出します');
+            window.parent._onPaResSuccess(resultData);
+            console.log('[CALLBACK] _onPaResSuccess関数の呼び出しに成功しました');
+            return true;
+          } else {
+            console.error('[CALLBACK] 親ウィンドウに_onPaResSuccess関数が見つかりません');
+            console.log('[CALLBACK] 親ウィンドウのプロパティ:', Object.keys(window.parent).filter(key => typeof window.parent[key] === 'function').join(', '));
           }
-          
-          // 親ウィンドウ通知を試みる
-          const notified = notifyParentWindow();
-          
-          // 親ウィンドウ通知が失敗した場合または確実性のため、直接APIを呼び出し
-          fetch('/api/payment-result', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(paymentData)
-          })
-          .then(response => response.json())
-          .then(result => {
-            console.log('API直接呼び出し結果:', result);
-            redirectToResult(result.status || 'success');
-          })
-          .catch(error => {
-            console.error('API呼び出しエラー:', error);
-            redirectToResult('failure');
-          });
-          
-          // 最終的な画面遷移処理
-          function redirectToResult(resultStatus) {
-            // クエリパラメータを構築
-            const params = new URLSearchParams();
-            params.append('status', resultStatus);
-            
-            try {
-              // トップウィンドウに直接リダイレクト
-              const url = '/payment-result?' + params.toString();
-              window.top.location.href = url;
-            } catch (e) {
-              console.error('リダイレクトエラー:', e);
-              // フォールバック: 現在のウィンドウで遷移
-              window.location.href = '/payment-result?' + params.toString();
-            }
-          }
-          
-          // いかなる場合でも3秒後には強制的にリダイレクト
-          setTimeout(() => {
-            redirectToResult("${status}");
-          }, 3000);
-        })();
-      </script>
-    </head>
-    <body>
-      <h2>認証処理が完了しました</h2>
-      <p>自動的に結果ページに移動します。移動しない場合は<a href="/payment-result?status=${status}" id="manual-link">こちら</a>をクリックしてください。</p>
-      <div id="debug-info" style="margin-top: 20px; padding: 10px; border: 1px solid #ccc; font-family: monospace;">
-        <p>デバッグ情報:</p>
-        <pre>MD: ${md}</pre>
-        <pre>MD長さ: ${md.length}</pre>
-        <pre>PaRes: ${paRes}</pre>
-        <pre>PaRes長さ: ${paRes.length}</pre>
-        <pre>Status: ${status}</pre>
-      </div>
-      <script>
-        // ユーザーがリンクをクリックできるよう即座に有効化
-        document.getElementById('manual-link').onclick = function() {
-          redirectToResult('${status}');
-          return false;
-        };
-      </script>
-    </body>
-    </html>
+        } else {
+          console.error('[CALLBACK] window.parentにアクセスできません');
+        }
+      } catch (e) {
+        console.error('[CALLBACK] 親ウィンドウの関数呼び出しエラー:', getErrorDetails(e));
+      }
+      
+      try {
+        // 方法2: postMessageを使用（すべてのオリジンに送信）
+        console.log('[CALLBACK] 方法2: postMessageで通知を試みます');
+        window.parent.postMessage({
+          event: 'pares_result',
+          ...resultData
+        }, '*');
+        console.log('[CALLBACK] postMessageの送信に成功しました');
+        return true;
+      } catch (e) {
+        console.error('[CALLBACK] postMessageエラー:', getErrorDetails(e));
+      }
+      
+      try {
+        // 方法3: ローカルストレージを使用
+        console.log('[CALLBACK] 方法3: ローカルストレージを使用した通知を試みます');
+        window.localStorage.setItem('3ds_auth_result', JSON.stringify(resultData));
+        console.log('[CALLBACK] ローカルストレージへの保存に成功しました');
+        return true; // 方法3が成功した場合もtrueを返す
+      } catch (e) {
+        console.error('[CALLBACK] ローカルストレージエラー:', getErrorDetails(e));
+      }
+      
+      console.error('[CALLBACK] すべての通知方法が失敗しました');
+      return false;
+    }
+    
+    // 親ウィンドウへの通知を試行
+    let notified = false;
+    try {
+      notified = notifyParentWindow();
+      console.log('[CALLBACK] 親ウィンドウへの通知結果:', notified ? '成功' : '失敗');
+    } catch (e) {
+      console.error('[CALLBACK] 予期せぬエラーが発生しました:', getErrorDetails(e));
+    }
+    
+    // 5秒後にフォールバック処理を実行（通信が確立できない場合）
+    setTimeout(function() {
+      console.log('[CALLBACK] フォールバック処理を確認中...');
+      // 既に通知が成功している場合は何もしない
+      if (notified) {
+        console.log('[CALLBACK] 既に通知が成功しているため、フォールバック処理はスキップします');
+        return;
+      }
+      
+      console.log('[CALLBACK] 通知が失敗したため、フォールバック処理を実行します');
+      try {
+        // 最終手段: 親ページにリダイレクト
+        console.log('[CALLBACK] 親ウィンドウのURLを変更します');
+        window.parent.location.href = '/payment-result?md=${encodeURIComponent(md)}&pares=${encodeURIComponent(paRes)}&status=${encodeURIComponent(status)}&source=callback_fallback';
+      } catch (e) {
+        console.error('[CALLBACK] 親ウィンドウリダイレクトエラー:', getErrorDetails(e));
+        try {
+          // エラーが発生した場合は現在のウィンドウをリダイレクト
+          console.log('[CALLBACK] 現在のウィンドウをリダイレクトします');
+          window.location.href = '/payment-result?md=${encodeURIComponent(md)}&pares=${encodeURIComponent(paRes)}&status=${encodeURIComponent(status)}&error=callback_failed&source=direct_redirect';
+        } catch (redirectError) {
+          console.error('[CALLBACK] 最終リダイレクトにも失敗しました:', getErrorDetails(redirectError));
+        }
+      }
+    }, 5000);
+  </script>
+</head>
+<body>
+  <h3>認証処理が完了しました</h3>
+  <p>自動的に結果ページに移動します。移動しない場合は<a href="javascript:void(0);" onclick="window.parent.location.href='/payment-result?md=${encodeURIComponent(md)}&pares=${encodeURIComponent(paRes)}&status=${encodeURIComponent(status)}';">こちら</a>をクリックしてください。</p>
+  
+  <div style="margin-top: 20px; border: 1px solid #ccc; padding: 10px; background-color: #f5f5f5;">
+    <h4>デバッグ情報:</h4>
+    <p>MD: ${md}</p>
+    <p>MD長さ: ${md.length}</p>
+    <p>PaRes: ${paRes}</p>
+    <p>PaRes長さ: ${paRes.length}</p>
+    <p>Status: ${status}</p>
+  </div>
+</body>
+</html>
   `);
   
+  console.log('親ウィンドウに通知するHTMLレスポンスを送信しました');
   console.log('=== 3Dセキュアコールバック受信 [END] ===');
 }
