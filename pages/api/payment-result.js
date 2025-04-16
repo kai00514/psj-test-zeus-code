@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { parseStringPromise } from 'xml2js';
+import { parseStringPromise, Builder } from 'xml2js';
 
 const secureApiEndpoint = 'https://linkpt.cardservice.co.jp/cgi-bin/secure/api.cgi';
 const clientip = '2019002175';
@@ -172,75 +172,88 @@ const processPayment = async (MD) => {
 };
 
 export default async function handler(req, res) {
-  console.log("=== payment-result.js API処理開始 ===");
-  
   if (req.method !== 'POST') {
-    return res.status(405).json({ message: 'Method not allowed' });
+    return res.status(405).json({ message: 'メソッドが許可されていません' });
+  }
+
+  const { MD } = req.body;
+  
+  if (!MD) {
+    return res.status(400).json({ message: 'MD（取引ID）が必要です' });
   }
 
   try {
-    console.log("受信データ:", JSON.stringify(req.body, null, 2));
-    const { MD, PaRes, status } = req.body;
-
-    if (!MD) {
-      console.error("MDパラメータ不足");
-      return res.status(400).json({
-        status: 'failure',
-        message: 'MDパラメータが不足しています'
+    console.log('【DEBUG】PayReq処理開始:', { MD });
+    
+    // PayReqリクエストXMLを構築
+    const builder = new Builder();
+    const payReqXml = builder.buildObject({
+      request: {
+        $: {
+          service: 'secure_link_3d',
+          action: 'payment'
+        },
+        xid: MD,
+        print_am: 'yes',
+        print_addition_value: 'yes'
+      }
+    });
+    
+    // Zeus APIにリクエスト送信
+    const response = await axios.post(
+      'https://linkpt.cardservice.co.jp/cgi-bin/secure/api.cgi',
+      payReqXml,
+      {
+        headers: {
+          'Content-Type': 'application/xml'
+        }
+      }
+    );
+    
+    // XMLレスポンスをJSONに変換
+    const result = await parseStringPromise(response.data);
+    console.log('【DEBUG】PayRes結果:', result);
+    
+    // レスポンス処理
+    if (result.response?.result?.[0]?.status?.[0] === 'success') {
+      // 成功時の処理
+      return res.status(200).json({
+        status: 'success',
+        orderNumber: result.response?.order_number?.[0] || '',
+        cardInfo: {
+          prefix: result.response?.card?.[0]?.number?.[0]?.prefix?.[0] || '',
+          suffix: result.response?.card?.[0]?.number?.[0]?.suffix?.[0] || '',
+          expires: {
+            year: result.response?.card?.[0]?.expires?.[0]?.year?.[0] || '',
+            month: result.response?.card?.[0]?.expires?.[0]?.month?.[0] || ''
+          }
+        },
+        amData: {
+          syonin: result.response?.am_data?.[0]?.syonin?.[0] || '',
+          denpyo: result.response?.am_data?.[0]?.denpyo?.[0] || '',
+          merchantno: result.response?.am_data?.[0]?.merchantno?.[0] || ''
+        },
+        additionValue: {
+          div: result.response?.addition_value?.[0]?.div?.[0] || '',
+          ctype: result.response?.addition_value?.[0]?.ctype?.[0] || '',
+          cardsend: result.response?.addition_value?.[0]?.cardsend?.[0] || '',
+          sendid: result.response?.addition_value?.[0]?.sendid?.[0] || '',
+          sendpoint: result.response?.addition_value?.[0]?.sendpoint?.[0] || ''
+        }
       });
-    }
-
-    // PaResの状態に基づく処理
-    if (status && status !== 'success') {
-      console.log("認証拒否のため処理中断");
+    } else {
+      // 失敗時の処理
       return res.status(200).json({
         status: 'failure',
-        message: '認証が拒否されました',
-        authStatus: status
+        code: result.response?.result?.[0]?.code?.[0] || 'unknown',
+        message: '決済処理に失敗しました'
       });
     }
-
-    // 認証処理 (AuthReq/AuthRes)
-    console.log("認証処理開始 (AuthReq/AuthRes)");
-    const authResult = await processAuthentication(MD, PaRes);
-    console.log("認証処理結果:", authResult);
-    
-    if (authResult.status !== 'success') {
-      console.error("認証失敗:", authResult);
-      return res.status(200).json({
-        status: 'failure',
-        message: '認証に失敗しました',
-        authCode: authResult.code,
-        authMessage: authResult.message
-      });
-    }
-
-    // 決済処理 (PayReq/PayRes) - 認証成功の場合のみ実行
-    console.log("決済処理開始 (PayReq/PayRes)");
-    const paymentResult = await processPayment(MD);
-    console.log("決済処理結果:", paymentResult);
-    
-    const response = {
-      status: paymentResult.status === 'success' ? 'success' : 'failure',
-      code: paymentResult.code,
-      message: paymentResult.message,
-      orderNumber: paymentResult.orderNumber,
-      cardInfo: paymentResult.cardInfo,
-      paymentDetails: paymentResult.paymentDetails,
-      rawPayResponse: paymentResult.rawResponse
-    };
-
-    console.log("\n=== フロントエンドへのレスポンス ===");
-    console.log(JSON.stringify(response, null, 2));
-    res.status(200).json(response);
-
   } catch (error) {
-    console.error('決済完了処理エラー:', error);
-    res.status(500).json({
-      status: 'failure',
-      message: '決済処理中にエラーが発生しました',
-      error: error.message
+    console.error('【ERROR】PayReq処理エラー:', error);
+    return res.status(500).json({ 
+      status: 'error',
+      message: `決済処理エラー: ${error.message}`
     });
   }
-  console.log("\n=== payment-result.js API処理終了 ===");
 } 

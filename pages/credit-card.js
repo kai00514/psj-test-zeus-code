@@ -27,6 +27,14 @@ export default function CreditCard() {
     script.onload = () => {
       console.log('Zeus JSスクリプト読み込み完了');
       setIsScriptLoaded(true);
+      
+      // スクリプト読み込み後にZeus SDKを初期化
+      if (typeof window.ZeusTokenAPI !== 'undefined') {
+        window.ZeusTokenAPI.init({
+          ipcode: window.zeusTokenIpcode
+        });
+        console.log('【DEBUG】Zeus SDKを初期化しました');
+      }
     };
     
     script.onerror = (error) => {
@@ -36,28 +44,177 @@ export default function CreditCard() {
     
     document.body.appendChild(script);
 
-    // 仕様書で指定されたグローバル関数の実装
-    // 1. PaRes受信後の画面制御操作メソッド
-    window._onPaResSuccess = function(data) {
-      console.log('_onPaResSuccess呼び出し:', data);
-      
-      // 3Dセキュアコンテナを非表示
-      const container = document.getElementById('3dscontainer');
-      if (container) {
-        container.style.display = 'none';
+    // 仕様書に準拠した loadedChallenge 関数を追加
+    window.loadedChallenge = function() {
+      console.log('【DEBUG】loadedChallenge関数が呼び出されました');
+      const divWaiter = document.getElementById('challenge_wait');
+      if (divWaiter) {
+        divWaiter.style.display = 'none';
       }
+    };
+    
+    // _onPaResSuccess 関数の修正（仕様書に準拠）
+    window._onPaResSuccess = function(data) {
+      console.log('【DEBUG-詳細】_onPaResSuccess開始 - 詳細情報:', {
+        timeStamp: new Date().toISOString(),
+        dataType: typeof data,
+        hasMD: !!data.MD,
+        mdValue: data.MD ? data.MD.substring(0, 10) + '...' : 'なし',
+        mdLength: data.MD ? data.MD.length : 0,
+        hasPaRes: !!data.PaRes,
+        paResValue: data.PaRes || 'なし',
+        rawData: JSON.stringify(data).substring(0, 100) + '...'
+      });
       
-      // 認証完了後の処理
-      const lastXidElement = document.getElementById('last-xid-value');
-      if (lastXidElement) {
-        const md = lastXidElement.value;
-        const paRes = data && data.PaRes ? data.PaRes : 'Y';
+      try {
+        // 3Dセキュアコンテナを非表示
+        const container = document.getElementById('3dscontainer');
+        if (container) {
+          container.style.display = 'none';
+          console.log('【DEBUG-詳細】3dscontainerを非表示に設定');
+        } else {
+          console.warn('【WARN】3dscontainerが見つかりません');
+        }
         
-        // 認証結果を決済処理APIに送信
-        completePayment(md, paRes);
-      } else {
-        console.error('取引IDが見つかりません');
+        // 認証完了表示を追加
+        const waitElement = document.getElementById('challenge_wait');
+        if (waitElement) {
+          waitElement.innerHTML = '<p><strong>認証が完了しました。決済処理を実行中...</strong></p>';
+          waitElement.style.display = 'block';
+          console.log('【DEBUG-詳細】認証完了メッセージを表示');
+        } else {
+          console.warn('【WARN】challenge_wait要素が見つかりません');
+        }
+        
+        // データからMDとPaResを取得 - 強化バージョン
+        let md = data.MD || data.md || '';
+        let paRes = data.PaRes || data.paRes || data.pares || '';
+        
+        console.log('【DEBUG-詳細】抽出した認証情報:', {
+          md_initial: md,
+          paRes_initial: paRes
+        });
+        
+        // MDがない場合の代替手段を強化
+        if (!md) {
+          // 隠しフィールドから取得
+          const lastXidElement = document.getElementById('last-xid-value');
+          if (lastXidElement) {
+            md = lastXidElement.value;
+            console.log('【DEBUG-詳細】隠しフィールドから取得したMD値:', md);
+          } else {
+            console.warn('【WARN】last-xid-value要素が見つかりません');
+            
+            // URL検索もしくはローカルストレージからの復元を試みる
+            try {
+              const urlParams = new URLSearchParams(window.location.search);
+              const urlMd = urlParams.get('md') || urlParams.get('MD');
+              if (urlMd) {
+                md = urlMd;
+                console.log('【DEBUG-詳細】URLから取得したMD値:', md);
+              } else {
+                const storedResult = localStorage.getItem('3ds_auth_result');
+                if (storedResult) {
+                  try {
+                    const storedData = JSON.parse(storedResult);
+                    if (storedData.MD) {
+                      md = storedData.MD;
+                      console.log('【DEBUG-詳細】ローカルストレージから取得したMD値:', md);
+                    }
+                  } catch (e) {
+                    console.error('【ERROR】ローカルストレージデータのパースエラー:', e);
+                  }
+                }
+              }
+            } catch (e) {
+              console.error('【ERROR】バックアップMD取得エラー:', e);
+            }
+          }
+        }
+        
+        // PaRes取得の代替手段を強化
+        if (!paRes) {
+          if (data.transStatus) {
+            paRes = data.transStatus;
+            console.log('【DEBUG-詳細】transStatusをPaResとして使用:', paRes);
+          } else {
+            // URLやローカルストレージから取得を試みる
+            try {
+              const urlParams = new URLSearchParams(window.location.search);
+              const urlPaRes = urlParams.get('pares') || urlParams.get('PaRes');
+              if (urlPaRes) {
+                paRes = urlPaRes;
+                console.log('【DEBUG-詳細】URLから取得したPaRes値:', paRes);
+              } else {
+                const storedResult = localStorage.getItem('3ds_auth_result');
+                if (storedResult) {
+                  try {
+                    const storedData = JSON.parse(storedResult);
+                    if (storedData.PaRes) {
+                      paRes = storedData.PaRes;
+                      console.log('【DEBUG-詳細】ローカルストレージから取得したPaRes値:', paRes);
+                    }
+                  } catch (e) {
+                    console.error('【ERROR】ローカルストレージデータのパースエラー:', e);
+                  }
+                }
+              }
+            } catch (e) {
+              console.error('【ERROR】バックアップPaRes取得エラー:', e);
+            }
+          }
+        }
+
+        // PaResが空の場合、デフォルト値を使用
+        if (!paRes) {
+          paRes = 'Y';
+          console.log('【DEBUG-詳細】PaResにデフォルト値Yを設定');
+        }
+        
+        console.log('【DEBUG-詳細】最終決済処理に使用するパラメータ:', { 
+          md, 
+          paRes,
+          md_length: md ? md.length : 0,
+          paRes_length: paRes ? paRes.length : 0
+        });
+        
+        // データの有効性を検証
+        if (!md) {
+          throw new Error('MD(取引ID)が取得できません');
+        }
+        
+        // ローカルストレージに状態を保存（リカバリー用）
+        try {
+          localStorage.setItem('last_auth_state', JSON.stringify({
+            md,
+            paRes,
+            timestamp: new Date().toISOString()
+          }));
+          console.log('【DEBUG-詳細】認証状態をローカルストレージに保存しました');
+        } catch (e) {
+          console.warn('【WARN】ローカルストレージへの保存に失敗:', e);
+        }
+        
+        // 認証APIを呼び出し
+        console.log('【DEBUG-詳細】executeAuthRequest関数を呼び出します');
+        executeAuthRequest(md, paRes);
+        
+      } catch (error) {
+        console.error('【ERROR-詳細】_onPaResSuccess処理エラー:', error);
+        console.error('【ERROR-詳細】エラースタック:', error.stack);
+        alert('認証後の処理中にエラーが発生しました: ' + error.message);
         setIsLoading(false);
+        
+        // エラー情報を結果ページに送信
+        router.push({
+          pathname: '/payment-result',
+          query: { 
+            status: 'error', 
+            message: error.message,
+            location: '_onPaResSuccess',
+            timestamp: new Date().toISOString()
+          }
+        });
       }
     };
     
@@ -68,63 +225,466 @@ export default function CreditCard() {
       setIsLoading(false);
     };
     
-    // postMessageイベントリスナー
+    // postMessageイベントリスナーの強化
     const handleMessage = (event) => {
-      console.log('postMessageイベント受信:', event.origin, event.data);
+      console.log('【DEBUG-詳細】postMessageイベント受信:', {
+        origin: event.origin,
+        dataType: typeof event.data,
+        data: typeof event.data === 'string' ? event.data.substring(0, 100) + '...' : JSON.stringify(event.data).substring(0, 100) + '...',
+        timeStamp: new Date().toISOString()
+      });
       
-      // AuthResultReadyイベント処理
-      if (event.data && event.data.event === 'AuthResultReady') {
-        console.log('Zeus認証結果イベント:', event.data);
+      try {
+        // 文字列の場合はJSONとしてパース、オブジェクトの場合はそのまま使用
+        let data;
+        if (typeof event.data === 'string') {
+          // JSONとして解析できない場合はそのまま使用
+          try {
+            data = JSON.parse(event.data);
+            console.log('【DEBUG-詳細】JSONとして正常にパース:', data);
+          } catch (e) {
+            console.log('【DEBUG-詳細】JSON解析エラー:', e.message);
+            data = { rawMessage: event.data };
+            
+            // 文字列からMDとPaResを抽出する試み - 正規表現を強化
+            const mdMatch = event.data.match(/MD=([^&\s]+)/i) || event.data.match(/"MD"\s*:\s*"([^"]+)"/i);
+            const paResMatch = event.data.match(/PaRes=([^&\s]+)/i) || event.data.match(/"PaRes"\s*:\s*"([^"]+)"/i);
+            
+            if (mdMatch) {
+              data.MD = decodeURIComponent(mdMatch[1]);
+              console.log('【DEBUG-詳細】文字列からMD抽出:', data.MD);
+            }
+            if (paResMatch) {
+              data.PaRes = decodeURIComponent(paResMatch[1]);
+              console.log('【DEBUG-詳細】文字列からPaRes抽出:', data.PaRes);
+            }
+          }
+        } else {
+          data = event.data;
+          console.log('【DEBUG-詳細】オブジェクトとして受信:', data);
+        }
+        
+        console.log("【DEBUG-詳細】解析後データ完全版:", JSON.stringify(data));
+        
+        // 認証結果イベントを検出（複数のイベント名に対応）
+        const isAuthEvent = data && (
+          data.event === 'AuthResultReady' || 
+          data.event === '3DSAuthResult' || 
+          data.event === 'pares_result' ||
+          data.MD || 
+          data.PaRes
+        );
+        
+        if (isAuthEvent) {
+          console.log('【DEBUG-詳細】認証結果イベント検出:', {
+            eventType: data.event || 'direct data',
+            hasMD: !!data.MD,
+            mdLength: data.MD ? data.MD.length : 0,
+            hasPaRes: !!data.PaRes,
+            paResValue: data.PaRes || 'なし'
+          });
+          
+          // グローバル関数を呼び出す前に結果を表示
+          window._onPaResSuccess(data);
+          console.log("【DEBUG-詳細】_onPaResSuccess呼び出し完了");
+        }
+      } catch (error) {
+        console.error('【ERROR-詳細】postMessageデータ処理エラー:', error);
+        console.error('【ERROR-詳細】エラー詳細:', error.stack);
+        console.error('【ERROR-詳細】問題のデータ:', event.data);
+        
+        // エラーが発生した場合でも処理を試みる
+        try {
+          if (typeof event.data === 'string' && (
+            event.data.includes('MD=') || 
+            event.data.includes('PaRes=')
+          )) {
+            console.log('【RECOVERY】エラー発生後のリカバリー処理を実行');
+            const searchParams = new URLSearchParams(event.data);
+            const recoveryData = {
+              MD: searchParams.get('MD') || '',
+              PaRes: searchParams.get('PaRes') || 'Y'
+            };
+            
+            if (recoveryData.MD) {
+              console.log('【RECOVERY】リカバリーデータ:', recoveryData);
+              window._onPaResSuccess(recoveryData);
+            }
+          }
+        } catch (recoveryError) {
+          console.error('【ERROR-詳細】リカバリー処理も失敗:', recoveryError.message);
+        }
       }
     };
     
     window.addEventListener('message', handleMessage);
+
+    // 重要: コールバックURL内のウィンドウをチェックするポーリング処理を修正
+    const pollIframeWindow = () => {
+      // コンテナを先に取得し、その後iframeを検索
+      const container = document.getElementById('3dscontainer');
+      if (!container) {
+        console.log('【DEBUG】3dscontainerが見つかりません');
+        return;
+      }
+      
+      // コンテナ内のiframeを取得
+      const iframes = container.getElementsByTagName('iframe');
+      if (iframes.length === 0) {
+        console.log('【DEBUG】iframeが見つかりません');
+        return;
+      }
+      
+      const iframe = iframes[0];
+      
+      try {
+        // iframeの内容を監視
+        console.log('【DEBUG】iframe監視中');
+        
+        // iframe内のURLをチェック
+        const checkIframeContent = () => {
+          try {
+            // アクセス可能なiframeコンテンツのみチェック
+            if (iframe.contentWindow && iframe.contentWindow.location.href) {
+              const url = iframe.contentWindow.location.href;
+              console.log('【DEBUG】iframe URL:', url);
+              
+              // コールバックURLかどうかをチェック
+              if (url.includes('/api/payment-result/callback') || 
+                  url.includes('notification') || 
+                  url.includes('challenge')) {
+                console.log('【DEBUG】コールバックURLを検出:', url);
+                
+                // URLからパラメータを抽出
+                const params = new URLSearchParams(url.split('?')[1] || '');
+                const md = params.get('MD') || '';
+                const paRes = params.get('PaRes') || 'Y';
+                
+                if (md) {
+                  console.log('【DEBUG】URLからMDとPaResを抽出:', { md, paRes });
+                  window._onPaResSuccess({ MD: md, PaRes: paRes });
+                  return true; // 監視終了
+                }
+              }
+            }
+          } catch (e) {
+            // クロスオリジンエラーは無視（正常な動作）
+            console.log('【DEBUG】iframe内容アクセスエラー (通常の動作)');
+          }
+          return false;
+        };
+        
+        // 1秒ごとにチェック
+        const intervalId = setInterval(() => {
+          if (checkIframeContent()) {
+            clearInterval(intervalId);
+          }
+        }, 1000);
+        
+        // 30秒後にポーリングを停止
+        setTimeout(() => {
+          clearInterval(intervalId);
+        }, 30000);
+      } catch (error) {
+        console.error('【ERROR】iframe監視エラー:', error);
+      }
+    };
+    
+    // 初期のiframe監視を開始
+    setTimeout(pollIframeWindow, 2000);
+
+    // 定期的に決済処理の完了をチェック
+    // 特にiframe内で認証が完了したが、通知が来ない場合のバックアップ
+    let checkCount = 0;
+    const maxChecks = 30; // 最大30回チェック
+    
+    const statusCheckInterval = setInterval(() => {
+      // 3Dセキュア認証画面の表示状態を確認
+      const container = document.getElementById('3dscontainer');
+      if (container && container.style.display === 'block') {
+        checkCount++;
+        console.log(`【DEBUG】認証状態確認 ${checkCount}/${maxChecks}`);
+        
+        // 現在表示中のiframeを検査
+        try {
+          const iframes = container.getElementsByTagName('iframe');
+          if (iframes.length > 0) {
+            const iframe = iframes[0];
+            try {
+              // iframeのコンテンツにアクセス (可能な場合のみ)
+              if (iframe.contentDocument) {
+                const text = iframe.contentDocument.body.textContent || '';
+                console.log('【DEBUG】iframe内テキスト確認:', text.substring(0, 100) + '...');
+                
+                // 認証完了メッセージが含まれているか確認
+                if (text.includes('認証処理が完了') || 
+                    text.includes('認証が完了') || 
+                    text.includes('完了しました')) {
+                  console.log('【DEBUG】認証完了テキストを検出');
+                  
+                  // MDを取得
+                  const mdElement = document.getElementById('last-xid-value');
+                  if (mdElement) {
+                    const md = mdElement.value;
+                    console.log('【DEBUG】保存されたMD値を使用:', md);
+                    window._onPaResSuccess({ MD: md, PaRes: 'Y' });
+                    
+                    // チェック停止
+                    clearInterval(statusCheckInterval);
+                  }
+                }
+              }
+            } catch (e) {
+              // クロスオリジンエラーは無視
+            }
+          }
+        } catch (e) {
+          console.error('【ERROR】iframe確認エラー:', e);
+        }
+        
+        // 最大回数を超えたら終了
+        if (checkCount >= maxChecks) {
+          clearInterval(statusCheckInterval);
+        }
+      } else {
+        // 3Dセキュア画面が表示されていない場合はチェック不要
+        clearInterval(statusCheckInterval);
+      }
+    }, 2000); // 2秒ごとにチェック
 
     return () => {
       if (script.parentNode) {
         script.parentNode.removeChild(script);
       }
       window.removeEventListener('message', handleMessage);
+      clearInterval(statusCheckInterval);
     };
   }, [router]);
 
-  // 認証後の決済完了処理
-  const completePayment = async (md, paRes) => {
-    try {
-      console.log('決済完了処理開始:', { md, paRes });
+  // 直接フレームを初期化する関数を改善
+  const initializeDirectIframe = (container, url, md, termUrl) => {
+    // フォーム送信用のiframeを作成
+    console.log('【DEBUG】フォールバック: 直接iframeを挿入');
+    
+    // URLにコールバック用のパラメータを追加
+    const callbackScript = `
+      <script>
+        window.addEventListener('load', function() {
+          try {
+            // 結果を親ウィンドウに通知する関数
+            window.notifyParent = function(md, paRes) {
+              if (window.parent && window.parent.postMessage) {
+                const data = { MD: md, PaRes: paRes || 'Y', event: '3DSAuthResult' };
+                window.parent.postMessage(JSON.stringify(data), '*');
+                console.log('親ウィンドウに通知:', data);
+              }
+            };
+            
+            // フォームの送信をキャプチャ
+            document.addEventListener('submit', function(e) {
+              const form = e.target;
+              const mdInput = form.querySelector('input[name="MD"]');
+              const paResInput = form.querySelector('input[name="PaRes"]');
+              
+              if (mdInput) {
+                const md = mdInput.value;
+                const paRes = paResInput ? paResInput.value : 'Y';
+                window.notifyParent(md, paRes);
+              }
+            });
+          } catch(e) {
+            console.error('コールバックスクリプトエラー:', e);
+          }
+        });
+      </script>
+    `;
+    
+    // 直接URLアクセス用のiframe
+    container.innerHTML = `
+      <form id="redirect-form" method="post" action="${url}" target="threeds-iframe">
+        <input type="hidden" name="MD" value="${md}" />
+        <input type="hidden" name="TermUrl" value="${termUrl}" />
+      </form>
+      <iframe 
+        name="threeds-iframe"
+        id="threeds-iframe" 
+        width="100%" 
+        height="450px" 
+        frameborder="0"
+        allow="camera"
+        onload="console.log('iframeロード完了');"
+      ></iframe>
+    `;
+    
+    // 監視処理を開始
+    setTimeout(() => {
+      // iframeを単純にIDで取得
+      const iframe = document.getElementById('threeds-iframe');
+      if (iframe) {
+        try {
+          // iframe内部にスクリプトを注入（可能な場合）
+          if (iframe.contentDocument) {
+            iframe.contentDocument.body.innerHTML += callbackScript;
+          }
+        } catch (e) {
+          console.log('iframeコンテンツアクセス制限（通常の動作）');
+        }
+      }
       
-      const response = await fetch('/api/payment-result', {
+      // ポーリング監視開始
+      pollIframeWindow();
+    }, 1000);
+    
+    // フォームを自動送信
+    const form = document.getElementById('redirect-form');
+    if (form) {
+      console.log('【DEBUG】リダイレクトフォームを送信');
+      form.submit();
+    }
+  };
+
+  // 仕様書に準拠した AuthReq 処理を実装
+  const executeAuthRequest = async (md, paRes) => {
+    console.log('【DEBUG-詳細】AuthReq処理開始:', { 
+      timeStamp: new Date().toISOString(),
+      md: md ? md.substring(0, 10) + '...' : 'なし',
+      md_length: md ? md.length : 0,
+      paRes,
+      paRes_length: paRes ? paRes.length : 0
+    });
+    
+    try {
+      // AuthReq APIを呼び出し
+      console.log('【DEBUG-詳細】/api/payment-auth APIを呼び出します');
+      const authResponse = await fetch('/api/payment-auth', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          xid: md,
+          paRes: paRes
+        }),
+      });
+      
+      console.log('【DEBUG-詳細】認証APIレスポンス受信:', { 
+        status: authResponse.status,
+        statusText: authResponse.statusText,
+        headers: Object.fromEntries([...authResponse.headers])
+      });
+      
+      if (!authResponse.ok) {
+        const errorText = await authResponse.text();
+        console.error('【ERROR-詳細】AuthReq APIエラーレスポンス:', errorText);
+        throw new Error(`AuthReq APIエラー: ${authResponse.status} - ${errorText}`);
+      }
+      
+      const authResult = await authResponse.json();
+      console.log('【DEBUG-詳細】AuthRes結果詳細:', JSON.stringify(authResult));
+      
+      // AuthResが成功の場合のみPayReqを実行
+      if (authResult.status === 'success') {
+        console.log('【DEBUG-詳細】認証成功 - PayReq処理を開始します');
+        // ドキュメントに状態を表示
+        document.getElementById('challenge_wait').innerHTML = '<p><strong>認証成功！決済処理を実行中...</strong></p>';
+        executePayRequest(md);
+      } else {
+        // 認証失敗
+        console.error('【ERROR-詳細】認証失敗:', authResult);
+        document.getElementById('challenge_wait').innerHTML = '<p><strong>認証失敗：</strong>' + (authResult.message || 'エラーが発生しました') + '</p>';
+        alert('認証処理に失敗しました: ' + (authResult.message || 'エラーが発生しました'));
+        setIsLoading(false);
+        
+        // 失敗結果ページへリダイレクト
+        router.push({
+          pathname: '/payment-result',
+          query: { 
+            status: 'failure', 
+            message: authResult.message || 'AuthReq処理に失敗しました',
+            code: authResult.code || 'unknown',
+            timestamp: new Date().toISOString()
+          }
+        });
+      }
+    } catch (error) {
+      console.error('【ERROR-詳細】AuthReq処理エラー詳細:', error);
+      console.error('【ERROR-詳細】エラースタック:', error.stack);
+      
+      document.getElementById('challenge_wait').innerHTML = '<p><strong>認証検証エラー：</strong>' + error.message + '</p>';
+      alert('認証検証処理中にエラーが発生しました: ' + error.message);
+      setIsLoading(false);
+      
+      // エラー結果ページへリダイレクト
+      router.push({
+        pathname: '/payment-result',
+        query: { 
+          status: 'error', 
+          message: error.message,
+          location: 'executeAuthRequest',
+          timestamp: new Date().toISOString()
+        }
+      });
+    }
+  };
+
+  // 仕様書に準拠した PayReq 処理を実装
+  const executePayRequest = async (md) => {
+    console.log('【DEBUG】PayReq処理開始:', { md });
+    
+    try {
+      // PayReq APIを呼び出し
+      const payResponse = await fetch('/api/payment-result', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           MD: md,
-          PaRes: paRes,
           status: 'success'
         }),
       });
       
-      const result = await response.json();
-      console.log('決済完了APIレスポンス:', result);
+      if (!payResponse.ok) {
+        const errorText = await payResponse.text();
+        throw new Error(`PayReq APIエラー: ${payResponse.status} - ${errorText}`);
+      }
       
-      // 結果ページへ遷移
+      const payResult = await payResponse.json();
+      console.log('【DEBUG】PayRes結果:', payResult);
+      
+      // 決済完了ページへリダイレクト
       router.push({
         pathname: '/payment-result',
-        query: { result: JSON.stringify(result) }
+        query: { result: JSON.stringify(payResult) }
       });
     } catch (error) {
-      console.error('決済完了処理エラー:', error);
-      setIsLoading(false);
+      console.error('【ERROR】PayReq処理エラー:', error);
       alert('決済処理中にエラーが発生しました: ' + error.message);
+      setIsLoading(false);
+      
+      // エラー結果ページへリダイレクト
+      router.push({
+        pathname: '/payment-result',
+        query: { status: 'error', message: error.message }
+      });
     }
   };
+
+  // completePayment 関数を executeAuthRequest 関数に置き換え
+  const completePayment = executeAuthRequest;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsLoading(true);
     
     try {
+      // 待機メッセージを表示
+      const waitElement = document.getElementById('challenge_wait');
+      if (waitElement) {
+        waitElement.style.display = 'block';
+        waitElement.innerHTML = '<p>決済処理を開始しています...</p>';
+      }
+      
       // カード情報とAPIを呼び出す
       const response = await fetch('/api/payment', {
         method: 'POST',
@@ -140,14 +700,18 @@ export default function CreditCard() {
         }),
       });
       
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`APIエラー: ${response.status} ${response.statusText} - ${errorText}`);
+      }
+      
       const result = await response.json();
       console.log('APIレスポンス:', result);
       
       if (result.iframeUrl && result.xid) {
-        // 待機メッセージを非表示
-        const waitElement = document.getElementById('challenge_wait');
+        // 待機メッセージを更新
         if (waitElement) {
-          waitElement.style.display = 'none';
+          waitElement.innerHTML = '<p>3Dセキュア認証画面を準備しています...</p>';
         }
         
         // XIDを保存（認証後の処理で使用）
@@ -170,6 +734,11 @@ export default function CreditCard() {
           // コンテナを表示
           container.style.display = 'block';
           
+          // 待機メッセージを更新
+          if (waitElement) {
+            waitElement.style.display = 'none';
+          }
+          
           // 重要: 仕様書に従ってsetPareqParams関数を呼び出す
           if (typeof window.setPareqParams === 'function') {
             // TermURLはコールバックAPI
@@ -177,27 +746,38 @@ export default function CreditCard() {
             
             console.log('setPareqParams呼び出し:', {
               md: result.xid,
-              paReq: '',
+              paReq: result.paReq || '',
               termUrl,
               threeDSMethod: '',
               iframeUrl: decodedUrl
             });
             
-            // 仕様書に従った引数で関数を呼び出し
-            window.setPareqParams(result.xid, '', termUrl, '', decodedUrl, {
-              container: '3dscontainer'  // 重要: コンテナIDを指定
-            });
+            try {
+              // 仕様書に従った引数で関数を呼び出し
+              window.setPareqParams(
+                result.xid,                  // MD (取引ID)
+                result.paReq || '',          // PaReq (認証データ)
+                termUrl,                     // TermURL (コールバックURL)
+                '',                          // threeDSMethod (空文字列)
+                decodedUrl,                  // iframeUrl (認証画面URL)
+                {
+                  container: '3dscontainer', // コンテナID
+                  width: '100%',             // 幅
+                  height: '450px'            // 高さ
+                }
+              );
+              console.log('【DEBUG】setPareqParams呼び出し成功');
+            } catch (error) {
+              console.error('【ERROR】setPareqParams呼び出しエラー:', error);
+              
+              // フォールバック: 直接iframeを挿入
+              initializeDirectIframe(container, decodedUrl, result.xid, termUrl);
+            }
           } else {
             console.error('setPareqParams関数が見つかりません');
             
             // フォールバック: 直接iframeを挿入
-            container.innerHTML = `<iframe 
-              src="${decodedUrl}" 
-              width="100%" 
-              height="450px" 
-              frameborder="0"
-              allow="camera"
-            ></iframe>`;
+            initializeDirectIframe(container, decodedUrl, result.xid, termUrl);
           }
         }
       } else {
