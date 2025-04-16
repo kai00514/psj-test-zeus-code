@@ -72,8 +72,6 @@ export default function CreditCard() {
         if (container) {
           container.style.display = 'none';
           console.log('【DEBUG-詳細】3dscontainerを非表示に設定');
-        } else {
-          console.warn('【WARN】3dscontainerが見つかりません');
         }
         
         // 認証完了表示を追加
@@ -81,138 +79,39 @@ export default function CreditCard() {
         if (waitElement) {
           waitElement.innerHTML = '<p><strong>認証が完了しました。決済処理を実行中...</strong></p>';
           waitElement.style.display = 'block';
-          console.log('【DEBUG-詳細】認証完了メッセージを表示');
-        } else {
-          console.warn('【WARN】challenge_wait要素が見つかりません');
         }
         
-        // データからMDとPaResを取得 - 強化バージョン
+        // MDが無い場合はXIDを使用
         let md = data.MD || data.md || '';
-        let paRes = data.PaRes || data.paRes || data.pares || '';
-        
-        console.log('【DEBUG-詳細】抽出した認証情報:', {
-          md_initial: md,
-          paRes_initial: paRes
-        });
-        
-        // MDがない場合の代替手段を強化
         if (!md) {
-          // 隠しフィールドから取得
           const lastXidElement = document.getElementById('last-xid-value');
           if (lastXidElement) {
             md = lastXidElement.value;
-            console.log('【DEBUG-詳細】隠しフィールドから取得したMD値:', md);
-          } else {
-            console.warn('【WARN】last-xid-value要素が見つかりません');
-            
-            // URL検索もしくはローカルストレージからの復元を試みる
-            try {
-              const urlParams = new URLSearchParams(window.location.search);
-              const urlMd = urlParams.get('md') || urlParams.get('MD');
-              if (urlMd) {
-                md = urlMd;
-                console.log('【DEBUG-詳細】URLから取得したMD値:', md);
-              } else {
-                const storedResult = localStorage.getItem('3ds_auth_result');
-                if (storedResult) {
-                  try {
-                    const storedData = JSON.parse(storedResult);
-                    if (storedData.MD) {
-                      md = storedData.MD;
-                      console.log('【DEBUG-詳細】ローカルストレージから取得したMD値:', md);
-                    }
-                  } catch (e) {
-                    console.error('【ERROR】ローカルストレージデータのパースエラー:', e);
-                  }
-                }
-              }
-            } catch (e) {
-              console.error('【ERROR】バックアップMD取得エラー:', e);
-            }
           }
         }
         
-        // PaRes取得の代替手段を強化
-        if (!paRes) {
-          if (data.transStatus) {
-            paRes = data.transStatus;
-            console.log('【DEBUG-詳細】transStatusをPaResとして使用:', paRes);
-          } else {
-            // URLやローカルストレージから取得を試みる
-            try {
-              const urlParams = new URLSearchParams(window.location.search);
-              const urlPaRes = urlParams.get('pares') || urlParams.get('PaRes');
-              if (urlPaRes) {
-                paRes = urlPaRes;
-                console.log('【DEBUG-詳細】URLから取得したPaRes値:', paRes);
-              } else {
-                const storedResult = localStorage.getItem('3ds_auth_result');
-                if (storedResult) {
-                  try {
-                    const storedData = JSON.parse(storedResult);
-                    if (storedData.PaRes) {
-                      paRes = storedData.PaRes;
-                      console.log('【DEBUG-詳細】ローカルストレージから取得したPaRes値:', paRes);
-                    }
-                  } catch (e) {
-                    console.error('【ERROR】ローカルストレージデータのパースエラー:', e);
-                  }
-                }
-              }
-            } catch (e) {
-              console.error('【ERROR】バックアップPaRes取得エラー:', e);
-            }
-          }
-        }
-
-        // PaResが空の場合、デフォルト値を使用
-        if (!paRes) {
-          paRes = 'Y';
-          console.log('【DEBUG-詳細】PaResにデフォルト値Yを設定');
-        }
+        // PaResがない場合はデフォルト値を設定
+        let paRes = data.PaRes || data.paRes || data.pares || data.transStatus || 'Y';
         
-        console.log('【DEBUG-詳細】最終決済処理に使用するパラメータ:', { 
-          md, 
-          paRes,
-          md_length: md ? md.length : 0,
-          paRes_length: paRes ? paRes.length : 0
+        // 直接結果ページにリダイレクト
+        router.push({
+          pathname: '/payment-result',
+          query: { 
+            md: md,
+            pares: paRes,
+            status: 'success',
+            source: 'direct'
+          }
         });
-        
-        // データの有効性を検証
-        if (!md) {
-          throw new Error('MD(取引ID)が取得できません');
-        }
-        
-        // ローカルストレージに状態を保存（リカバリー用）
-        try {
-          localStorage.setItem('last_auth_state', JSON.stringify({
-            md,
-            paRes,
-            timestamp: new Date().toISOString()
-          }));
-          console.log('【DEBUG-詳細】認証状態をローカルストレージに保存しました');
-        } catch (e) {
-          console.warn('【WARN】ローカルストレージへの保存に失敗:', e);
-        }
-        
-        // 認証APIを呼び出し
-        console.log('【DEBUG-詳細】executeAuthRequest関数を呼び出します');
-        executeAuthRequest(md, paRes);
-        
       } catch (error) {
-        console.error('【ERROR-詳細】_onPaResSuccess処理エラー:', error);
-        console.error('【ERROR-詳細】エラースタック:', error.stack);
-        alert('認証後の処理中にエラーが発生しました: ' + error.message);
-        setIsLoading(false);
-        
-        // エラー情報を結果ページに送信
+        console.error('【ERROR】_onPaResSuccess関数エラー:', error);
+        // エラー時も結果ページにリダイレクト
         router.push({
           pathname: '/payment-result',
           query: { 
             status: 'error', 
             message: error.message,
-            location: '_onPaResSuccess',
-            timestamp: new Date().toISOString()
+            location: '_onPaResSuccess'
           }
         });
       }

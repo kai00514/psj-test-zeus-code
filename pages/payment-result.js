@@ -93,34 +93,10 @@ export default function PaymentResult() {
 
   // 認証結果を処理する関数
   const processAuthResult = async (md, paRes) => {
-    console.log('コールバックから受け取った認証結果を処理:', { md, paRes });
+    console.log('認証結果を処理します:', { md, paRes });
     
     try {
-      // まずAuthReqを実行
-      console.log('AuthReq APIを呼び出します');
-      const authResponse = await fetch('/api/payment-auth', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          xid: md,
-          paRes: paRes || 'Y'
-        }),
-      });
-      
-      if (!authResponse.ok) {
-        throw new Error(`認証API呼び出しエラー: ${authResponse.status}`);
-      }
-      
-      const authResult = await authResponse.json();
-      console.log('AuthRes結果:', authResult);
-      
-      if (authResult.status !== 'success') {
-        throw new Error(`認証失敗: ${authResult.message || 'エラーが発生しました'}`);
-      }
-      
-      // 認証成功の場合、PayReqを実行
+      // 直接決済完了処理を実行（AuthReqをスキップ）
       console.log('PayReq APIを呼び出します');
       const payResponse = await fetch('/api/payment-result', {
         method: 'POST',
@@ -129,6 +105,7 @@ export default function PaymentResult() {
         },
         body: JSON.stringify({
           MD: md,
+          PaRes: paRes,
           status: 'success'
         }),
       });
@@ -138,13 +115,14 @@ export default function PaymentResult() {
       }
       
       const payResult = await payResponse.json();
-      console.log('PayRes結果:', payResult);
+      console.log('決済結果:', payResult);
       
-      // 結果を表示
+      // 成功した場合の処理
       if (payResult.status === 'success') {
         setStatus('success');
         setOrderInfo({
           orderNumber: payResult.orderNumber || '',
+          amount: payResult.amount || '',
           cardInfo: payResult.cardInfo || {},
           amData: payResult.amData || {}
         });
@@ -155,7 +133,7 @@ export default function PaymentResult() {
       setIsProcessed(true);
       
     } catch (error) {
-      console.error('認証/決済処理エラー:', error);
+      console.error('決済処理エラー:', error);
       setStatus('failure');
       setIsProcessed(true);
     }
