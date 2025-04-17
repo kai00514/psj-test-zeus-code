@@ -54,63 +54,123 @@ export default function CreditCard() {
     };
     
     // _onPaResSuccess 関数の修正（仕様書に準拠）
+    console.log('【DEBUG】_onPaResSuccess関数を設定');
+    console.log('【DEBUG】_onPaResSuccess関数を設定11');
     window._onPaResSuccess = function(data) {
-      console.log('【DEBUG-詳細】_onPaResSuccess開始 - 詳細情報:', {
-        timeStamp: new Date().toISOString(),
-        dataType: typeof data,
-        hasMD: !!data.MD,
-        mdValue: data.MD ? data.MD.substring(0, 10) + '...' : 'なし',
-        mdLength: data.MD ? data.MD.length : 0,
-        hasPaRes: !!data.PaRes,
-        paResValue: data.PaRes || 'なし',
-        rawData: JSON.stringify(data).substring(0, 100) + '...'
-      });
+      console.log('【超詳細】_onPaResSuccess呼び出し - タイムスタンプ:', new Date().toISOString());
+      console.log('【超詳細】_onPaResSuccess受信データ完全版:', data);
+      console.log('【超詳細】データ型:', typeof data);
+      console.log('【超詳細】呼び出し元:', new Error().stack);
       
       try {
-        // 3Dセキュアコンテナを非表示
+        // コンテナ要素の取得と非表示
         const container = document.getElementById('3dscontainer');
         if (container) {
           container.style.display = 'none';
-          console.log('【DEBUG-詳細】3dscontainerを非表示に設定');
         }
         
-        // 認証完了表示を追加
+        // 待機要素の表示を復活
         const waitElement = document.getElementById('challenge_wait');
         if (waitElement) {
-          waitElement.innerHTML = '<p><strong>認証が完了しました。決済処理を実行中...</strong></p>';
           waitElement.style.display = 'block';
+          waitElement.innerHTML = '<p><strong>認証が完了しました。結果を処理中...</strong></p>';
         }
         
-        // MDが無い場合はXIDを使用
-        let md = data.MD || data.md || '';
-        if (!md) {
-          const lastXidElement = document.getElementById('last-xid-value');
-          if (lastXidElement) {
-            md = lastXidElement.value;
-          }
-        }
-        
-        // PaResがない場合はデフォルト値を設定
+        // MD値の取得を強化
+        let md = data.MD || data.md || window.lastMdValue || '';
         let paRes = data.PaRes || data.paRes || data.pares || data.transStatus || 'Y';
         
-        // 直接結果ページにリダイレクト
-        router.push({
-          pathname: '/payment-result',
-          query: { 
-            md: md,
-            pares: paRes,
-            status: 'success',
-            source: 'direct'
+        console.log('【超詳細】抽出した認証データ:', { md, paRes });
+        console.log('【超詳細】window.lastMdValue:', window.lastMdValue);
+        console.log('【超詳細】hiddenフィールド値:', document.getElementById('last-xid-value')?.value);
+        
+        // グローバルコールバックデータをチェック
+        if (!md && window.callbackReceived && window.callbackData) {
+          console.log('【超詳細】グローバル変数からコールバックデータを検出:', window.callbackData);
+          md = window.callbackData.MD || window.callbackData.md || '';
+          paRes = window.callbackData.PaRes || window.callbackData.paRes || window.callbackData.pares || 'Y';
+        }
+        
+        // 既存の待機タイマーをクリア
+        if (window._pendingAuthCheck) {
+          console.log('【超詳細】既存の待機タイマーをクリア');
+          clearTimeout(window._pendingAuthCheck);
+          window._pendingAuthCheck = null;
+        }
+        
+        // コールバックからのデータ到着を待つタイマーを設定
+        if (!md) {
+          console.log('【警告】MDが見つかりません。コールバックを5秒間待機します...');
+          
+          // hiddenフィールドから復元を試みる
+          const hiddenMd = document.getElementById('last-xid-value')?.value;
+          if (hiddenMd) {
+            console.log('【復旧】hiddenフィールドからMDを復元:', hiddenMd);
+            md = hiddenMd;
+          } else if (window.lastMdValue) {
+            console.log('【復旧】window.lastMdValueからMDを復元:', window.lastMdValue);
+            md = window.lastMdValue;
+          } else {
+            window._pendingAuthCheck = setTimeout(() => {
+              console.log('【再試行】コールバック待機タイムアウト。最終手段を試みます');
+              
+              // 最終手段としてhiddenフィールドから再取得
+              const lastResortMd = document.getElementById('last-xid-value')?.value || window.lastMdValue;
+              if (lastResortMd) {
+                console.log('【最終手段】MD値を使用して認証処理を実行:', lastResortMd);
+                executeAuthRequest(lastResortMd, 'Y');
+              } else {
+                console.error('【致命的】MDを復元できません。処理を中止します');
+                alert('決済情報の取得に失敗しました。もう一度お試しください。');
+                setIsLoading(false);
+              }
+            }, 5000);
+            return; // 処理を中断し、コールバックを待つ
           }
-        });
+        }
+        
+        // 認証結果を処理
+        console.log('【超詳細】PaRes値チェック:', paRes);
+        if (paRes.toUpperCase() === 'Y') {
+          if (md) {
+            console.log('【超詳細】認証成功。AuthReq処理を開始します:', { md, paRes });
+            executeAuthRequest(md, paRes);
+          } else {
+            console.error('【エラー】MDが復元できませんでした');
+            router.push({
+              pathname: '/payment-result',
+              query: {
+                status: 'failure',
+                message: '3Dセキュア認証情報が取得できませんでした',
+                code: 'MD_RECOVERY_FAILED',
+              }
+            });
+          }
+        } else {
+          console.error('【エラー】3Dセキュア認証失敗:', { md, paRes });
+          alert('カード認証に失敗しました。');
+          setIsLoading(false);
+          router.push({
+            pathname: '/payment-result',
+            query: {
+              status: 'failure',
+              message: '3Dセキュア認証に失敗しました',
+              code: '3DS_AUTH_FAILED',
+              paResValue: paRes
+            }
+          });
+        }
       } catch (error) {
-        console.error('【ERROR】_onPaResSuccess関数エラー:', error);
-        // エラー時も結果ページにリダイレクト
+        console.error('【致命的エラー】_onPaResSuccess処理中の例外:', error);
+        console.error('【致命的エラー】スタックトレース:', error.stack);
+        console.error('【致命的エラー】問題の入力データ:', JSON.stringify(data));
+        
         router.push({
           pathname: '/payment-result',
-          query: { 
-            status: 'error', 
-            message: error.message,
+          query: {
+            status: 'error',
+            message: `予期せぬエラー: ${error.message}`,
+            code: 'UNEXPECTED_ERROR',
             location: '_onPaResSuccess'
           }
         });
@@ -185,7 +245,9 @@ export default function CreditCard() {
           
           // グローバル関数を呼び出す前に結果を表示
           window._onPaResSuccess(data);
+          console.log("【DEBUG-詳細】_onPaResSuccess:", data);
           console.log("【DEBUG-詳細】_onPaResSuccess呼び出し完了");
+          
         }
       } catch (error) {
         console.error('【ERROR-詳細】postMessageデータ処理エラー:', error);
@@ -351,6 +413,73 @@ export default function CreditCard() {
       }
     }, 2000); // 2秒ごとにチェック
 
+    // setPareqParams関数を仕様通りに修正
+    window.setPareqParams = function(params) {
+      console.log('【DEBUG-詳細】setPareqParams呼び出し:', params);
+      
+      try {
+        if (!params.iframeUrl) {
+          throw new Error('iframeUrlが見つかりません');
+        }
+        
+        // 3Dセキュアコンテナを取得
+        const container = document.getElementById('3dscontainer');
+        if (!container) {
+          throw new Error('3dscontainerが見つかりません');
+        }
+        
+        // コンテナを表示状態に
+        container.style.display = 'block';
+        
+        // 既存のiframeがあれば削除
+        while (container.firstChild) {
+          container.removeChild(container.firstChild);
+        }
+        
+        // コールバックURLを構築
+        const callbackUrl = `${window.location.origin}/api/payment-result/callback`;
+        
+        // iframeを作成してコンテナに追加
+        const iframe = document.createElement('iframe');
+        iframe.id = '3dsecure_iframe';
+        iframe.name = '3dsecure_iframe';
+        iframe.width = '100%';
+        iframe.height = '400px';
+        iframe.style.border = 'none';
+        iframe.style.overflow = 'hidden';
+        
+        // termUrlを追加（コールバック先）
+        let iframeUrl = params.iframeUrl;
+        if (!iframeUrl.includes('termUrl=')) {
+          iframeUrl += (iframeUrl.includes('?') ? '&' : '?') + 
+                     `termUrl=${encodeURIComponent(callbackUrl)}`;
+        }
+        
+        // MD値をデータ属性として保存
+        if (params.md) {
+          iframe.setAttribute('data-md', params.md);
+          // セッションストレージにも保存
+          sessionStorage.setItem('zeus_md', params.md);
+        }
+        
+        // iframeのソースを設定
+        iframe.src = iframeUrl;
+        container.appendChild(iframe);
+        
+        // 待機メッセージを表示（iframe読み込み完了時にloadedChallengeで非表示）
+        const waitElement = document.getElementById('challenge_wait');
+        if (waitElement) {
+          waitElement.innerHTML = '<p>3Dセキュア認証画面を読み込んでいます...</p>';
+          waitElement.style.display = 'block';
+        }
+        
+        return true;
+      } catch (e) {
+        console.error('【ERROR】setPareqParams処理エラー:', e);
+        return false;
+      }
+    };
+
     return () => {
       if (script.parentNode) {
         script.parentNode.removeChild(script);
@@ -442,27 +571,21 @@ export default function CreditCard() {
     }
   };
 
-  // 仕様書に準拠した AuthReq 処理を実装
+  // 修正後の executeAuthRequest 関数
   const executeAuthRequest = async (md, paRes) => {
-    console.log('【DEBUG-詳細】AuthReq処理開始:', { 
-      timeStamp: new Date().toISOString(),
-      md: md ? md.substring(0, 10) + '...' : 'なし',
-      md_length: md ? md.length : 0,
-      paRes,
-      paRes_length: paRes ? paRes.length : 0
-    });
+    console.log('【DEBUG-詳細】AuthReq処理開始:', {md, paRes});
     
     try {
-      // AuthReq APIを呼び出し
-      console.log('【DEBUG-詳細】/api/payment-auth APIを呼び出します');
-      const authResponse = await fetch('/api/payment-auth', {
+      // 正しいエンドポイント /api/payment-result を呼び出す
+      const authResponse = await fetch('/api/payment-result', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          xid: md,
-          paRes: paRes
+          md: md,
+          paRes: paRes,
+          step: 'auth'
         }),
       });
       
@@ -526,20 +649,20 @@ export default function CreditCard() {
     }
   };
 
-  // 仕様書に準拠した PayReq 処理を実装
+  // 修正後の executePayRequest 関数
   const executePayRequest = async (md) => {
     console.log('【DEBUG】PayReq処理開始:', { md });
     
     try {
-      // PayReq APIを呼び出し
+      // 正しいエンドポイント /api/payment-result を呼び出す
       const payResponse = await fetch('/api/payment-result', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          MD: md,
-          status: 'success'
+          md: md,
+          step: 'payment'
         }),
       });
       
@@ -613,7 +736,8 @@ export default function CreditCard() {
           waitElement.innerHTML = '<p>3Dセキュア認証画面を準備しています...</p>';
         }
         
-        // XIDを保存（認証後の処理で使用）
+        // XIDを保存（認証後の処理で使用）- より確実に
+        window.lastMdValue = result.xid;
         const hiddenField = document.createElement('input');
         hiddenField.type = 'hidden';
         hiddenField.id = 'last-xid-value';

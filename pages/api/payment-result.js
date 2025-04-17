@@ -172,46 +172,48 @@ const processPayment = async (MD) => {
 };
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ message: 'メソッドが許可されていません' });
-  }
-
-  try {
-    console.log('=== 決済リクエスト受信 [START] ===');
-    console.log('リクエストボディ:', req.body);
-    
-    // MDとPaResを取得
-    const md = req.body.MD;
-    const paRes = req.body.PaRes;
-    
-    if (!md) {
-      return res.status(400).json({ message: 'MD（トランザクションID）が必要です' });
-    }
-    
-    // 通常はここでZeus APIを呼び出して決済を完了させる
-    // このサンプルでは成功レスポンスを返す
-    const orderNumber = 'ORD-' + Date.now().toString().substring(6);
-    
-    // 成功レスポンスを返す
-    return res.status(200).json({
-      status: 'success',
-      orderNumber: orderNumber,
-      amount: req.body.amount || '1000',
-      timestamp: new Date().toISOString(),
-      cardInfo: {
-        prefix: '4111',
-        suffix: '1111',
-        expires: {
-          month: '08',
-          year: '29'
-        }
-      },
-      amData: {
-        syonin: 'ZEUS' + Math.floor(Math.random() * 100000)
-      }
+  console.log('=== /api/payment-result 処理開始 ===');
+  console.log('リクエストデータ:', req.body);
+  
+  const { step, md, paRes /* 他のパラメータ */ } = req.body;
+  
+  if (!md) {
+    console.error('MDが不足しています');
+    return res.status(400).json({
+      status: 'error',
+      message: '認証データが不足しています (MD)'
     });
+  }
+  
+  try {
+    if (step === 'auth') {
+      // AuthReq処理
+      console.log('=== AuthReq処理開始 ===');
+      const authXml = generateAuthXml(md, paRes); // MDとPaResを使用
+      // ... ゼウスAPIへのリクエスト送信とレスポンス処理 ...
+      console.log('=== AuthReq処理完了 ===');
+      // ... レスポンスを返す ...
+    } else if (step === 'payment') {
+      // PayReq処理
+      console.log('=== PayReq処理開始 ===');
+      const payXml = generatePayXml(md); // MDを使用
+      // ... ゼウスAPIへのリクエスト送信とレスポンス処理 ...
+      console.log('=== PayReq処理完了 ===');
+      // ... レスポンスを返す ...
+    } else {
+      console.error('不明なステップ:', step);
+      return res.status(400).json({
+        status: 'error',
+        message: '無効なステップパラメーター'
+      });
+    }
   } catch (error) {
     console.error('決済処理エラー:', error);
-    return res.status(500).json({ message: error.message });
+    return res.status(500).json({
+      status: 'error',
+      message: `処理中にエラーが発生しました: ${error.message}`
+    });
+  } finally {
+    console.log('=== /api/payment-result 処理終了 ===');
   }
 } 

@@ -6,9 +6,8 @@ import Head from 'next/head';
 export default function PaymentResult() {
   const router = useRouter();
   const [status, setStatus] = useState('processing');
-  const [orderInfo, setOrderInfo] = useState(null);
-  const [isProcessed, setIsProcessed] = useState(false);
-  const [debug, setDebug] = useState({});
+  const [resultData, setResultData] = useState(null);
+  const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
     console.log('=== 決済結果ページロード [詳細] ===');
@@ -17,127 +16,38 @@ export default function PaymentResult() {
     console.log('リファラ:', document.referrer);
     console.log('タイムスタンプ:', new Date().toISOString());
 
-    // デバッグ情報を収集
-    const debugInfo = {
-      url: window.location.href,
-      referrer: document.referrer,
-      timestamp: new Date().toISOString(),
-      query: router.query,
-      userAgent: navigator.userAgent
-    };
-    setDebug(debugInfo);
+    if (router.isReady) {
+      const { result, status: queryStatus, message, code, paResValue } = router.query;
 
-    if (!router.isReady) return;
-    if (isProcessed) return;
-
-    // 3Dセキュア認証結果の処理（コールバックから直接遷移した場合）
-    if (router.query.md || router.query.MD) {
-      console.log('認証結果パラメータを検出:', {
-        md: router.query.md || router.query.MD,
-        paRes: router.query.pares || router.query.PaRes || 'なし',
-        source: router.query.source || '直接'
-      });
-      
-      // まだ決済処理が完了していない場合は、AuthReq/PayReqを実行
-      // 通常このルートは、認証後のコールバックでフロントエンド処理が失敗した場合のフォールバック
-      processAuthResult(router.query.md || router.query.MD, router.query.pares || router.query.PaRes || 'Y');
-      return;
-    }
-
-    // 決済結果の処理
-    if (router.query.result) {
-      try {
-        const resultData = JSON.parse(router.query.result);
-        console.log('決済結果データを検出:', resultData);
-        
-        if (resultData.status === 'success') {
-          setStatus('success');
-          setOrderInfo({
-            orderNumber: resultData.orderNumber || '',
-            amount: router.query.amount || '',
-            cardInfo: resultData.cardInfo || {},
-            amData: resultData.amData || {}
-          });
-        } else {
-          setStatus('failure');
+      if (result) {
+        try {
+          const parsedResult = JSON.parse(result);
+          setResultData(parsedResult);
+          // APIからの結果に基づいてstatusを設定
+          if (parsedResult.status === 'success') {
+            setStatus('success');
+          } else {
+            setStatus('failure');
+            setErrorMessage(parsedResult.message || '決済処理に失敗しました。');
+          }
+        } catch (e) {
+          console.error("結果データのパースエラー:", e);
+          setStatus('error');
+          setErrorMessage('結果データの処理中にエラーが発生しました。');
         }
-        
-        setIsProcessed(true);
-      } catch (e) {
-        console.error('決済結果データの解析エラー:', e);
-        setStatus('failure');
-        setIsProcessed(true);
-      }
-      return;
-    }
-
-    // 単純なステータスパラメータの処理
-    if (router.query.status) {
-      console.log('Status found in URL:', router.query.status);
-      setStatus(router.query.status);
-      
-      if (router.query.orderNumber) {
-        setOrderInfo({
-          orderNumber: router.query.orderNumber,
-          amount: router.query.amount
-        });
-      }
-      
-      setIsProcessed(true);
-    } else {
-      console.log('No status in URL, setting default failure');
-      setStatus('failure');
-      setIsProcessed(true);
-    }
-  }, [router.isReady, router.query, isProcessed]);
-
-  // 認証結果を処理する関数
-  const processAuthResult = async (md, paRes) => {
-    console.log('認証結果を処理します:', { md, paRes });
-    
-    try {
-      // 直接決済完了処理を実行（AuthReqをスキップ）
-      console.log('PayReq APIを呼び出します');
-      const payResponse = await fetch('/api/payment-result', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          MD: md,
-          PaRes: paRes,
-          status: 'success'
-        }),
-      });
-      
-      if (!payResponse.ok) {
-        throw new Error(`決済API呼び出しエラー: ${payResponse.status}`);
-      }
-      
-      const payResult = await payResponse.json();
-      console.log('決済結果:', payResult);
-      
-      // 成功した場合の処理
-      if (payResult.status === 'success') {
-        setStatus('success');
-        setOrderInfo({
-          orderNumber: payResult.orderNumber || '',
-          amount: payResult.amount || '',
-          cardInfo: payResult.cardInfo || {},
-          amData: payResult.amData || {}
-        });
+      } else if (queryStatus) {
+        // 3DS認証失敗など、API結果以外のステータス
+        setStatus(queryStatus);
+        setErrorMessage(message || '処理中に問題が発生しました。');
+        // 必要に応じて追加情報を表示
+        if (code) console.log("エラーコード:", code);
+        if (paResValue) console.log("PaRes値:", paResValue);
       } else {
-        setStatus('failure');
+        setStatus('error');
+        setErrorMessage('決済結果を取得できませんでした。');
       }
-      
-      setIsProcessed(true);
-      
-    } catch (error) {
-      console.error('決済処理エラー:', error);
-      setStatus('failure');
-      setIsProcessed(true);
     }
-  };
+  }, [router.isReady, router.query]);
 
   // 状態に応じたメッセージとスタイル
   const messages = {
@@ -177,24 +87,24 @@ export default function PaymentResult() {
           </h2>
         </div>
         
-        {orderInfo && status === 'success' && (
+        {resultData && status === 'success' && (
           <div style={{ marginTop: '1.5rem', backgroundColor: '#f9f9f9', padding: '1rem', borderRadius: '4px' }}>
             <h3 style={{ borderBottom: '1px solid #ddd', paddingBottom: '0.5rem', marginTop: 0 }}>決済情報</h3>
-            <p><strong>注文番号:</strong> {orderInfo.orderNumber}</p>
-            {orderInfo.amount && <p><strong>金額:</strong> {orderInfo.amount}円</p>}
+            <p><strong>注文番号:</strong> {resultData.orderNumber || 'N/A'}</p>
+            {resultData.amount && <p><strong>金額:</strong> {resultData.amount}円</p>}
             
-            {orderInfo.cardInfo && (
+            {resultData.cardInfo && (
               <div style={{ marginTop: '0.5rem' }}>
-                <p><strong>カード情報:</strong> {orderInfo.cardInfo.prefix || ''}••••••{orderInfo.cardInfo.suffix || ''}</p>
-                {orderInfo.cardInfo.expires && (
-                  <p><strong>有効期限:</strong> {orderInfo.cardInfo.expires.month || ''}/{orderInfo.cardInfo.expires.year || ''}</p>
+                <p><strong>カード情報:</strong> {resultData.cardInfo.prefix || ''}••••••{resultData.cardInfo.suffix || ''}</p>
+                {resultData.cardInfo.expires && (
+                  <p><strong>有効期限:</strong> {resultData.cardInfo.expires.month || ''}/{resultData.cardInfo.expires.year || ''}</p>
                 )}
               </div>
             )}
             
-            {orderInfo.amData && (
+            {resultData.amData && (
               <div style={{ marginTop: '0.5rem' }}>
-                <p><strong>承認番号:</strong> {orderInfo.amData.syonin || '-'}</p>
+                <p><strong>承認番号:</strong> {resultData.amData.syonin || '-'}</p>
                 <p><strong>決済日時:</strong> {new Date().toLocaleString('ja-JP')}</p>
               </div>
             )}
@@ -242,7 +152,7 @@ export default function PaymentResult() {
             <details>
               <summary style={{ cursor: 'pointer', fontWeight: 'bold' }}>デバッグ情報</summary>
               <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                {JSON.stringify(debug, null, 2)}
+                {JSON.stringify(resultData, null, 2)}
               </pre>
             </details>
           </div>

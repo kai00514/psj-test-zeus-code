@@ -8,131 +8,135 @@ const key = '11da83f6e7ab803020e74be300ad3761d55f7f74';
 
 export default async function handler(req, res) {
   console.log('=== 3Dセキュアコールバック受信 [START] ===');
-  console.log('受信データ 全体:', req.body);
-  console.log('受信クエリ:', req.query);
-  console.log('受信ヘッダー:', req.headers);
-  console.log('リクエストメソッド:', req.method);
   
-  // リクエストボディの全プロパティを探索
-  console.log('リクエストボディの全プロパティ:');
-  Object.keys(req.body).forEach(key => {
-    console.log(`${key}: ${typeof req.body[key]} = ${req.body[key]}`);
-  });
+  // MDとPaResの取得ロジックを強化
+  let md = null;
+  let paRes = null;
   
-  // 受信データを安全にエスケープ
-  const md = (req.body.MD || req.query.MD || '').replace(/"/g, '&quot;').replace(/'/g, '\\\'');
-  
-  // PaResの詳細な解析
-  let paRes = '';
-  if (req.body.PaRes) {
-    paRes = req.body.PaRes;
-    console.log('PaRes found in body.PaRes');
-  } else if (req.body.pares) {
-    paRes = req.body.pares;
-    console.log('PaRes found in body.pares');
-  } else if (req.query.PaRes) {
-    paRes = req.query.PaRes;
-    console.log('PaRes found in query.PaRes');
-  } else if (req.query.pares) {
-    paRes = req.query.pares;
-    console.log('PaRes found in query.pares');
-  } else if (req.body.transStatus) {
-    paRes = req.body.transStatus;
-    console.log('transStatusをPaResとして使用');
-  } else {
-    // トランザクションIDやその他の情報から可能性のあるPaResを探す
-    console.log('標準的なPaResが見つかりません。代替データを探します...');
-    if (req.body.threeDSMethodData) {
-      paRes = req.body.threeDSMethodData;
-      console.log('threeDSMethodDataをPaResとして使用');
-    } else if (req.body.cres) {
-      paRes = req.body.cres;
-      console.log('cresをPaResとして使用');
-    } else {
-      paRes = 'Y'; // 最後の手段としてデフォルト値
-      console.log('PaResが見つからないため、デフォルト値Yを使用');
-    }
+  // クエリパラメータから取得を試みる（大文字・小文字の両方）
+  if (req.query.MD || req.query.md) {
+    md = req.query.MD || req.query.md;
+    console.log('【DEBUG】クエリパラメータからMDを取得:', md);
   }
   
-  // トランザクションステータスの解析
-  const transStatus = req.body.transStatus || 'Y';
-  console.log('トランザクションステータス:', transStatus);
+  if (req.query.PaRes || req.query.pares || req.query.paRes) {
+    paRes = req.query.PaRes || req.query.pares || req.query.paRes;
+    console.log('【DEBUG】クエリパラメータからPaResを取得:', paRes);
+  }
   
-  // PaResを安全にエスケープ
-  console.log('PaRes1 :', paRes);
-  paRes = paRes.toString().replace(/"/g, '&quot;').replace(/'/g, '\\\'');
-  console.log('PaRes:', paRes);
-  const status = (req.body.status || 'success').replace(/"/g, '&quot;').replace(/'/g, '\\\'');
+  // ボディから取得を試みる（大文字・小文字の両方）
+  if (!md && req.body) {
+    if (typeof req.body === 'string') {
+      try {
+        const parsedBody = JSON.parse(req.body);
+        md = parsedBody.MD || parsedBody.md;
+        paRes = parsedBody.PaRes || parsedBody.paRes || parsedBody.pares;
+      } catch (e) {
+        console.log('【DEBUG】ボディをJSONとしてパースできません:', e);
+      }
+    } else if (typeof req.body === 'object') {
+      md = req.body.MD || req.body.md;
+      paRes = req.body.PaRes || req.body.paRes || req.body.pares;
+    }
+    
+    if (md) console.log('【DEBUG】ボディからMDを取得:', md);
+    if (paRes) console.log('【DEBUG】ボディからPaResを取得:', paRes);
+  }
   
-  console.log('エスケープ後のデータ:', { md, paRes, status });
-  console.log('データ長さ:', { 
-    md_length: md.length, 
-    paRes_length: paRes.length, 
-    status_length: status.length 
-  });
+  // フォームデータからの取得も試みる
+  if (!md && req.body && typeof req.body === 'object') {
+    const bodyKeys = Object.keys(req.body).map(k => k.toLowerCase());
+    for (const key of bodyKeys) {
+      if (key.toLowerCase() === 'md') md = req.body[key];
+      if (key.toLowerCase() === 'pares') paRes = req.body[key];
+    }
+    
+    if (md) console.log('【DEBUG】フォームデータからMDを取得:', md);
+    if (paRes) console.log('【DEBUG】フォームデータからPaResを取得:', paRes);
+  }
   
-  // すべてのオリジンを許可する設定
-  const parentOrigin = '*';
+  console.log('【CRITICAL】最終的な認証データ:', { md, paRes });
   
-  console.log('親ウィンドウオリジン:', parentOrigin);
-  
-  // HTMLレスポンスを返す（単純化したバージョン）
+  // レスポンスは親ウィンドウに通知するJavaScriptを含むHTML
   res.setHeader('Content-Type', 'text/html');
-  res.status(200).send(`
+  const html = `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>3Dセキュア認証完了</title>
-  <style>
-    body { font-family: sans-serif; margin: 20px; text-align: center; }
-    .message { margin: 20px 0; }
-    .button { display: inline-block; padding: 10px 20px; background: #4caf50; color: white; border-radius: 4px; text-decoration: none; }
-  </style>
-  
+  <title>3Dセキュア認証結果</title>
   <script>
-    // ページロード時に自動的に次のページへリダイレクト
-    window.onload = function() {
-      // まずlocalStorageに確実に保存
+    // 超強化デバッグログ
+    console.log('[コールバックページ] 初期化時刻:', new Date().toISOString());
+    console.log('[コールバックページ] 認証データ:', { MD: '${md || "未取得"}', PaRes: '${paRes || "未取得"}' });
+    console.log('[コールバックページ] 親ウィンドウアクセス:', window.parent ? 'アクセス可能' : 'アクセス不可');
+    console.log('[コールバックページ] location:', window.location.href);
+    
+    // 3種類の方法で親ウィンドウに通知を試みる
+    function notifyParent() {
       try {
-        localStorage.setItem('3ds_auth_result', JSON.stringify({
-          MD: '${md}',
-          PaRes: '${paRes}',
-          status: '${status}',
-          timestamp: new Date().toISOString()
-        }));
-      } catch(e) {
-        console.error('ローカルストレージエラー:', e);
-      }
-      
-      // 0.5秒後に親ウィンドウをリダイレクト
-      setTimeout(function() {
-        try {
-          const redirectUrl = '/payment-result?md=${encodeURIComponent(md)}&pares=${encodeURIComponent(paRes)}&status=${encodeURIComponent(status)}&source=callback_direct';
-          console.log('リダイレクト先:', redirectUrl);
-          window.parent.location.href = redirectUrl;
-        } catch(e) {
-          console.error('リダイレクトエラー:', e);
-          document.getElementById('error-message').style.display = 'block';
+        // 方法1: 直接関数呼び出し
+        if (window.parent && window.parent._onPaResSuccess) {
+          console.log('[コールバックページ] 親ウィンドウの_onPaResSuccess関数を呼び出します');
+          window.parent._onPaResSuccess({
+            MD: '${md || ""}',
+            PaRes: '${paRes || "Y"}'
+          });
+          console.log('[コールバックページ] 親ウィンドウの関数呼び出し完了');
+          return true;
+        } 
+        // 方法2: postMessage
+        else if (window.parent && window.parent.postMessage) {
+          console.log('[コールバックページ] postMessageで親ウィンドウに通知します');
+          window.parent.postMessage({
+            type: 'PARES_SUCCESS',
+            data: { MD: '${md || ""}', PaRes: '${paRes || "Y"}' }
+          }, '*');
+          console.log('[コールバックページ] postMessage送信完了');
+          return true;
         }
-      }, 500);
-    };
+        // 方法3: グローバル変数経由
+        else if (window.parent) {
+          console.log('[コールバックページ] グローバル変数で通知を試みます');
+          try {
+            window.parent.callbackData = { MD: '${md || ""}', PaRes: '${paRes || "Y"}' };
+            window.parent.callbackReceived = true;
+            console.log('[コールバックページ] グローバル変数設定完了');
+            return true;
+          } catch (ex) {
+            console.error('[コールバックページ] グローバル変数設定失敗:', ex);
+            return false;
+          }
+        }
+        else {
+          console.error('[コールバックページ] 親ウィンドウとの通信方法が見つかりません');
+          return false;
+        }
+      } catch (e) {
+        console.error('[コールバックページ] 親ウィンドウへの通知エラー:', e);
+        return false;
+      }
+    }
+    
+    // 即時実行して、失敗したら500ミリ秒後に再試行
+    if (!notifyParent()) {
+      console.log('[コールバックページ] 初回通知失敗。500ms後に再試行します');
+      setTimeout(notifyParent, 500);
+    }
   </script>
 </head>
 <body>
-  <h2>認証処理が完了しました</h2>
-  <div class="message">決済結果ページに移動しています...</div>
-  
-  <div id="error-message" style="display: none; color: #d32f2f; margin: 20px 0;">
-    <p>自動的に移動できませんでした。</p>
-    <a href="/payment-result?md=${encodeURIComponent(md)}&pares=${encodeURIComponent(paRes)}&status=${encodeURIComponent(status)}&source=manual" class="button">
-      こちらをクリックして続行
-    </a>
+  <h2>3Dセキュア認証結果</h2>
+  <p>認証が完了しました。ブラウザを閉じないでください...</p>
+  <div id="debug-data" style="margin-top: 20px; font-size: 12px; color: #666;">
+    <p>デバッグ情報：</p>
+    <pre>MD: ${md || "取得できませんでした"}\nPaRes: ${paRes || "取得できませんでした"}</pre>
   </div>
 </body>
 </html>
-  `);
+`;
+  res.status(200).send(html);
   
-  console.log('親ウィンドウに通知するHTMLレスポンスを送信しました');
   console.log('=== 3Dセキュアコールバック受信 [END] ===');
+  console.log('【DEBUG】リクエストボディ全体:', req.body);
 }
